@@ -60,6 +60,8 @@ export function defaultAppConfig(): AppConfig {
     allowFiller: false,
     mixCustomerWarn: true,
     showPendingTags: true,
+    scheduleMode: 'auto',
+    overrideNotes: {},
     minLoadM3ByProcess: { D002: DEFAULT_D002_MIN_M3 },
     d002MinLoadM3: DEFAULT_D002_MIN_M3,
     cycle: {
@@ -116,6 +118,8 @@ export function mergeConfig(partial?: LegacyConfigInput | null): AppConfig {
     demo: { ...base.demo, ...(partial.demo ?? {}) },
     fp: { ...base.fp, ...(partial.fp ?? {}) },
     mix: { ...base.mix, ...(partial.mix ?? {}) },
+    scheduleMode: partial.scheduleMode === 'manual' ? 'manual' : 'auto',
+    overrideNotes: { ...(partial.overrideNotes ?? {}) },
   };
 }
 
@@ -129,6 +133,8 @@ export function persistableConfig(config: AppConfig): AppConfig {
     ...config,
     minLoadM3ByProcess,
     d002MinLoadM3: minLoadM3ByProcess.D002 ?? config.d002MinLoadM3 ?? DEFAULT_D002_MIN_M3,
+    scheduleMode: config.scheduleMode === 'manual' ? 'manual' : 'auto',
+    overrideNotes: { ...(config.overrideNotes ?? {}) },
     load: {
       defaultMinM3: config.load.defaultMinM3,
       loadMetric: config.load.loadMetric,

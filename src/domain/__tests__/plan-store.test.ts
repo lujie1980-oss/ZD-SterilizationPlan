@@ -285,6 +285,68 @@ describe('plan-store-v2', () => {
     expect(migrated.config.minLoadM3ByProcess.D002).toBe(37);
     expect(migrated.config.d002MinLoadM3).toBe(37);
   });
+
+  it('A-MODE-01: persists scheduleMode=manual and restores after load', () => {
+    const cfg = defaultAppConfig();
+    cfg.demo.enableSeed = false;
+    cfg.scheduleMode = 'manual';
+    cfg.overrideNotes = { F1: '现场柜占用' };
+    savePlan({
+      date: '2026-07-24',
+      shift: '白班',
+      furnaces: [{ id: 'F1', cabinetId: '柜9', date: '2026-07-24', shift: '白班', lines: ['P001'] }],
+      nextFurnaceSeq: 2,
+      virtualLines: [],
+      config: cfg,
+      planSeedVersion: 2,
+      sparseWiped: false,
+    });
+    const loaded = loadPlan();
+    expect(loaded.config.scheduleMode).toBe('manual');
+    expect(loaded.config.overrideNotes?.F1).toBe('现场柜占用');
+    expect(loaded.furnaces).toHaveLength(1);
+  });
+
+  it('A-MODE-02: old snapshots without scheduleMode default to auto', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        date: '2026-07-24',
+        shift: '白班',
+        furnaces: [],
+        nextFurnaceSeq: 1,
+        virtualLines: [],
+        config: { d002MinLoadM3: 56 },
+        planSeedVersion: 2,
+      }),
+    );
+    const loaded = loadPlan();
+    expect(loaded.config.scheduleMode).toBe('auto');
+    expect(loaded.config.overrideNotes).toEqual({});
+  });
+
+  it('A-MODE-03: switching scheduleMode does not clear furnaces', () => {
+    const cfg = defaultAppConfig();
+    cfg.demo.enableSeed = false;
+    cfg.scheduleMode = 'manual';
+    savePlan({
+      date: '2026-07-24',
+      shift: '白班',
+      furnaces: [{ id: 'F1', cabinetId: '柜8', date: '2026-07-24', shift: '白班', lines: ['P001'], manualViolation: true }],
+      nextFurnaceSeq: 2,
+      virtualLines: [],
+      config: cfg,
+      planSeedVersion: 2,
+      sparseWiped: false,
+    });
+    const loaded = loadPlan();
+    loaded.config.scheduleMode = 'auto';
+    savePlan(loaded);
+    const again = loadPlan();
+    expect(again.config.scheduleMode).toBe('auto');
+    expect(again.furnaces[0]?.lines).toEqual(['P001']);
+    expect(again.furnaces[0]?.manualViolation).toBe(true);
+  });
 });
 
 describe('eligibility', () => {

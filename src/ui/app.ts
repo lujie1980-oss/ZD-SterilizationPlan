@@ -14,6 +14,18 @@ import { addDays, dayOffset, fmtDate, fmtDateTime } from '../domain/dates';
 import type { AppConfig, EntryLoad, FurnaceRun, Shift, StockLine, ValidationIssue } from '../domain/entities';
 import { buildEntryLoads } from '../domain/entry-scheduler';
 import { buildDayPlanCsv } from '../domain/export-csv';
+import { deriveFacts } from '../domain/facts';
+import {
+  applyAssign,
+  applyChangeCabinet,
+  cloneFurnaces,
+  collectFurnaceIssues,
+  commitSuggestCombine,
+  decideCommit,
+  extendPoolById,
+  filterAndSortIssues,
+  type IssueFilter,
+} from '../domain/commit-gate';
 import { effectiveMinLoadM3, setProcessMinLoad } from '../domain/min-load';
 import {
   assignedIds,
@@ -26,9 +38,8 @@ import {
   upsertVirtualLine,
   visibleUnassignedPool,
 } from '../domain/pool';
-import { canAddFurnace, sortIssues, validateAll, validateFurnace } from '../domain/rule-engine';
+import { canAddFurnace, validateAll, validateFurnace } from '../domain/rule-engine';
 import { applySplit, findSplitTarget } from '../domain/split-wizard';
-import { suggestCombineD002Cab9 } from '../domain/suggest-combine';
 import { loadPlan, savePlan, type LoadedPlan } from '../persistence/plan-store-v2';
 import { $, $$, $opt, escapeHtml, toast } from './dom';
 
@@ -53,6 +64,7 @@ interface UiState {
   virtualLines: StockLine[];
   planSeedVersion: number;
   pool: StockLine[];
+  valFilter: IssueFilter;
 }
 
 const PAGE_TITLES: Record<Page, string> = {
@@ -85,14 +97,43 @@ function poolById(id: string): StockLine | undefined {
   return state.pool.find((p) => p.id === id) || state.virtualLines.find((p) => p.id === id);
 }
 
-function ruleCtx(sameShift = currentFurnaces(state.furnaces, state.date, state.shift)) {
+function ruleCtx(sameShift = currentFurnaces(state.furnaces, state.date, state.shift), lookup = poolById) {
   return {
     cabinets: CABINETS,
     processes: PROCESSES,
-    poolById,
+    poolById: lookup,
     config: state.config,
     sameShiftFurnaces: sameShift,
   };
+}
+
+function ruleCtxFor(furnaces: FurnaceRun[], lookup = poolById) {
+  return ruleCtx(currentFurnaces(furnaces, state.date, state.shift), lookup);
+}
+
+function scheduleMode(): 'auto' | 'manual' {
+  return state.config.scheduleMode === 'manual' ? 'manual' : 'auto';
+}
+
+function applyDecision(
+  decision: ReturnType<typeof decideCommit>,
+  successToast: string,
+): boolean {
+  if (decision.aborted) {
+    toast(decision.message, 'error');
+    return false;
+  }
+  state.furnaces = decision.persisted;
+  persist();
+  render();
+  if (decision.needsOverridePrompt) {
+    toast(decision.message, 'warn');
+    const viol = decision.persisted.find((f) => f.manualViolation);
+    if (viol) showOverridePrompt(viol.id, decision.issues);
+  } else {
+    toast(successToast);
+  }
+  return true;
 }
 
 function minTarget(process: string): number {
@@ -160,8 +201,138 @@ function syncFurnacePlan(opts?: { silent?: boolean }): void {
 
 function collectIssues(): ValidationIssue[] {
   const furns = currentFurnaces(state.furnaces, state.date, state.shift);
-  const furnaceIssues = validateAll(furns, ruleCtx(furns));
-  return sortIssues([...furnaceIssues, ...state.fpConflicts]);
+  const furnaceIssues = collectFurnaceIssues(furns, ruleCtx(furns), scheduleMode());
+  return [...furnaceIssues, ...state.fpConflicts];
+}
+
+function factStripHtml(line: StockLine): string {
+  const facts = deriveFacts(line, PROCESSES, state.config, state.date);
+  const dueCls = facts.dueTone === 'overdue' ? 'due-overdue' : facts.dueTone === 'soon' ? 'due-soon' : 'due-ok';
+  const chips = facts.facts
+    .map(
+      (f) =>
+        `<button type="button" class="fact-chip fact-${f.tone}" data-fact-open="${escapeHtml(line.id)}" data-fact-code="${escapeHtml(f.code)}">${escapeHtml(f.label)}</button>`,
+    )
+    .join('');
+  return `<div class="fact-strip" data-fact-open="${escapeHtml(line.id)}" title="点击查看规则说明（只读事实，不代替校验中心）">
+    <span class="fact-due ${dueCls}">${escapeHtml(facts.dueLabel)}</span>
+    ${chips}
+  </div>`;
+}
+
+function openFactDrawer(lineId: string): void {
+  const line = poolById(lineId);
+  if (!line) return;
+  const facts = deriveFacts(line, PROCESSES, state.config, state.date);
+  const proc = PROCESSES.find((p) => p.code === line.process);
+  $('#factDrawerTitle').textContent = `规则事实 · ${line.id}`;
+  $('#factDrawerBody').innerHTML = `
+    <p>以下为待排行只读事实，<strong>不代替校验中心</strong>。点击芯片仅打开说明。</p>
+    <h4>交期</h4>
+    <p>${escapeHtml(facts.dueLabel)}（相对工作台日期 ${escapeHtml(state.date)}）</p>
+    <h4>指定柜</h4>
+    <p>${facts.hasDesignatedCabinet ? `是 · ${facts.allowedCabinets.map(escapeHtml).join('、')}` : '否 · 未指定柜'}</p>
+    ${proc ? `<p class="hint">工艺 ${escapeHtml(proc.code)} ${escapeHtml(proc.name)} 主数据允许柜：${proc.cabinets.map(escapeHtml).join('、')}</p>` : ''}
+    <h4>适用规则芯片</h4>
+    ${facts.facts
+      .map(
+        (f) => `<div class="fact-detail-row">
+        <span class="fact-chip fact-${f.tone}">${escapeHtml(f.label)}</span>
+        <p>${escapeHtml(f.detail || f.code)}</p>
+      </div>`,
+      )
+      .join('')}
+    <p class="hint">硬约束以校验中心 / 提交闸门为准。自动排产拒绝 error 落盘；手工调整可保存并标「手工违例」。</p>
+  `;
+  $('#factDrawerMask').style.display = 'flex';
+}
+
+function closeFactDrawer(): void {
+  const mask = $opt('#factDrawerMask');
+  if (mask) mask.style.display = 'none';
+}
+
+function showOverridePrompt(furnaceId: string, issues: ValidationIssue[]): void {
+  const existing = state.config.overrideNotes?.[furnaceId] || '';
+  const errMsgs = issues
+    .filter((i) => i.sev === 'error')
+    .map((i) => escapeHtml(i.msg))
+    .join('<br>');
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask';
+  mask.innerHTML = `
+    <div class="modal">
+      <div class="modal-hd">
+        <span>手工违例 · ${escapeHtml(furnaceId)}</span>
+        <button class="modal-close" type="button">×</button>
+      </div>
+      <div class="modal-bd">
+        <div class="strong-banner danger" style="margin-bottom:12px">已按手工调整保存。建议填写违例原因（可不填，不阻断）。</div>
+        <p style="margin-bottom:8px">${errMsgs || '存在硬错误'}</p>
+        <label class="label">违例原因（建议填写）</label>
+        <textarea class="input" id="overrideNoteInput" style="width:100%;height:80px;margin-top:6px">${escapeHtml(existing)}</textarea>
+      </div>
+      <div class="modal-ft">
+        <button class="btn" type="button" data-act="skip">跳过</button>
+        <button class="btn btn-primary" type="button" data-act="save">保存原因</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  (mask.querySelector('.modal-close') as HTMLElement).onclick = close;
+  (mask.querySelector('[data-act=skip]') as HTMLElement).onclick = close;
+  (mask.querySelector('[data-act=save]') as HTMLElement).onclick = () => {
+    const note = ((mask.querySelector('#overrideNoteInput') as HTMLTextAreaElement).value || '').trim();
+    saveOverrideNote(furnaceId, note);
+    close();
+    toast(note ? '已保存违例原因' : '未填写原因，已保持保存结果', 'info');
+  };
+}
+
+function saveOverrideNote(furnaceId: string, note: string): void {
+  const notes = { ...(state.config.overrideNotes ?? {}) };
+  if (note) notes[furnaceId] = note;
+  else delete notes[furnaceId];
+  state.config = { ...state.config, overrideNotes: notes };
+  persist();
+  render();
+}
+
+function setScheduleMode(mode: 'auto' | 'manual'): void {
+  if (scheduleMode() === mode) return;
+  state.config = { ...state.config, scheduleMode: mode };
+  persist();
+  render();
+  if (mode === 'auto') {
+    const furns = currentFurnaces(state.furnaces, state.date, state.shift);
+    const hasErr = furns.some((f) => validateFurnace(f, ruleCtx(furns)).some((i) => i.sev === 'error'));
+    if (hasErr) toast('已切回自动排产：存在违例炉次需手工处理或改回合法。新的自动写入若含 error 将被拒绝。', 'warn');
+  } else {
+    toast('已切换为手工调整：error 可落盘，炉次将标「手工违例」，建议填写原因。', 'info');
+  }
+}
+
+function renderModeBanner(): void {
+  const el = $opt('#wbModeBanner');
+  if (!el) return;
+  const furns = currentFurnaces(state.furnaces, state.date, state.shift);
+  const ctx = ruleCtx(furns);
+  const errFurnaces = furns.filter((f) => validateFurnace(f, ctx).some((i) => i.sev === 'error'));
+  if (!errFurnaces.length) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  if (scheduleMode() === 'manual') {
+    el.className = 'strong-banner danger';
+    el.innerHTML =
+      '手工违例：当前班次存在硬错误，已允许保存。建议填写违例原因。请到校验中心查看（可筛「仅手工违例」）。';
+  } else {
+    el.className = 'strong-banner warn';
+    el.innerHTML =
+      '需手工处理或改回合法：自动排产模式下这些炉次含硬错误，新的自动写入（含建议拼炉）若仍有 error 将被拒绝。';
+  }
+  el.style.display = '';
 }
 
 function navigate(page: Page): void {
@@ -205,17 +376,49 @@ function assignSelected(): void {
     toast('请勾选可排池中未分配的行', 'warn');
     return;
   }
-  toAdd.forEach((id) => f.lines.push(id));
-  state.selectedPool.clear();
-  persist();
-  render();
-  toast(`已分配 ${toAdd.length} 行至 ${f.cabinetId}（${f.id}）`);
+  const next = applyAssign(state.furnaces, f.id, toAdd);
+  const decision = decideCommit({
+    previous: state.furnaces,
+    next,
+    config: state.config,
+    ctx: ruleCtxFor(next),
+    editSource: 'manual',
+  });
+  if (!decision.aborted) state.selectedPool.clear();
+  applyDecision(decision, `已分配 ${toAdd.length} 行至 ${f.cabinetId}（${f.id}）`);
+}
+
+function changeFurnaceCabinet(furnaceId: string, cabinetId: string): void {
+  const f = state.furnaces.find((x) => x.id === furnaceId);
+  if (!f || f.cabinetId === cabinetId) return;
+  const next = applyChangeCabinet(state.furnaces, furnaceId, cabinetId);
+  const decision = decideCommit({
+    previous: state.furnaces,
+    next,
+    config: state.config,
+    ctx: ruleCtxFor(next),
+    editSource: 'manual',
+  });
+  applyDecision(decision, `已将 ${furnaceId} 改至 ${cabinetId}`);
 }
 
 function removeFromFurnace(furnaceId: string, lineId: string): void {
-  const f = state.furnaces.find((x) => x.id === furnaceId);
+  const next = cloneFurnaces(state.furnaces);
+  const f = next.find((x) => x.id === furnaceId);
   if (!f) return;
   f.lines = f.lines.filter((id) => id !== lineId);
+  const decision = decideCommit({
+    previous: state.furnaces,
+    next,
+    config: state.config,
+    ctx: ruleCtxFor(next),
+    editSource: 'manual',
+  });
+  if (decision.aborted) {
+    toast(decision.message, 'error');
+    return;
+  }
+  state.furnaces = decision.persisted;
   persist();
   render();
 }
@@ -223,6 +426,11 @@ function removeFromFurnace(furnaceId: string, lineId: string): void {
 function deleteFurnace(furnaceId: string): void {
   state.furnaces = state.furnaces.filter((f) => f.id !== furnaceId);
   if (state.selectedFurnaceId === furnaceId) state.selectedFurnaceId = null;
+  if (state.config.overrideNotes?.[furnaceId]) {
+    const notes = { ...state.config.overrideNotes };
+    delete notes[furnaceId];
+    state.config = { ...state.config, overrideNotes: notes };
+  }
   persist();
   render();
   toast('已删除炉次');
@@ -230,7 +438,7 @@ function deleteFurnace(furnaceId: string): void {
 
 function suggestCombine(): void {
   const assigned = assignedIds(state.furnaces);
-  const { result, furnaces, nextSeq, selectedFurnaceId } = suggestCombineD002Cab9({
+  const result = commitSuggestCombine({
     pool: state.pool,
     furnaces: state.furnaces,
     assigned,
@@ -239,14 +447,21 @@ function suggestCombine(): void {
     nextSeq: state.nextFurnaceSeq,
     minLoad: effectiveMinLoadM3('D002', state.config, PROCESSES),
     poolById,
+    config: state.config,
+    cabinets: CABINETS,
+    processes: PROCESSES,
   });
-  if (!result.ok) {
+  if (!result.ok && !result.aborted) {
     toast(result.message, 'info');
     return;
   }
-  state.furnaces = furnaces;
-  state.nextFurnaceSeq = nextSeq;
-  if (selectedFurnaceId) state.selectedFurnaceId = selectedFurnaceId;
+  if (result.aborted) {
+    toast(result.message, 'error');
+    return;
+  }
+  state.furnaces = result.persisted;
+  state.nextFurnaceSeq = result.nextSeq;
+  if (result.selectedFurnaceId) state.selectedFurnaceId = result.selectedFurnaceId;
   persist();
   render();
   toast(result.message, 'info');
@@ -339,18 +554,38 @@ function showSplitModal(line: StockLine): void {
       shift: state.shift,
       nextSeq: state.nextFurnaceSeq,
     });
+    const extras = [applied.rowA, applied.rowB];
+    const nextFurnaces = [...cloneFurnaces(state.furnaces), ...applied.furnaces];
+    const lookup = extendPoolById(poolById, extras);
+    const decision = decideCommit({
+      previous: state.furnaces,
+      next: nextFurnaces,
+      config: state.config,
+      ctx: ruleCtxFor(nextFurnaces, lookup),
+      editSource: 'manual',
+    });
+    if (decision.aborted) {
+      toast(decision.message, 'error');
+      return;
+    }
     const upA = upsertVirtualLine(state.virtualLines, state.pool, applied.rowA);
     const upB = upsertVirtualLine(upA.virtualLines, upA.pool, applied.rowB);
     state.virtualLines = upB.virtualLines;
     state.pool = upB.pool;
     state.selectedPool.delete(line.id);
-    state.furnaces.push(...applied.furnaces);
+    state.furnaces = decision.persisted;
     state.nextFurnaceSeq = applied.nextSeq;
     state.selectedFurnaceId = applied.furnaces[0]!.id;
     persist();
     close();
     render();
-    toast(`已拆为两炉：${applied.rowA.id}（${applied.rowA.boxes}箱）/ ${applied.rowB.id}（${applied.rowB.boxes}箱）→ ${cab}`);
+    if (decision.needsOverridePrompt) {
+      toast(decision.message, 'warn');
+      const viol = decision.persisted.find((x) => x.manualViolation);
+      if (viol) showOverridePrompt(viol.id, decision.issues);
+    } else {
+      toast(`已拆为两炉：${applied.rowA.id}（${applied.rowA.boxes}箱）/ ${applied.rowB.id}（${applied.rowB.boxes}箱）→ ${cab}`);
+    }
   };
   mask.addEventListener('click', (e) => {
     if (e.target === mask) close();
@@ -406,6 +641,8 @@ function renderWorkbench(): void {
 
   ($('#wbDate') as HTMLInputElement).value = state.date;
   $$('#wbShiftTabs .shift-tab').forEach((t) => t.classList.toggle('active', t.dataset.shift === state.shift));
+  $$('#scheduleModeTabs .shift-tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === scheduleMode()));
+  renderModeBanner();
   $('#chipVol').textContent = `${totalVol.toFixed(1)} m³`;
   $('#chipTarget').textContent = furns.length ? `${furns.length} 炉` : '—';
   $('#chipIssues').textContent = String(errCount + warnCount);
@@ -445,26 +682,22 @@ function renderWorkbench(): void {
 
   const tbody = $('#poolTableBody');
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="9"><div class="empty"><div class="emoji">📭</div><div>无可排行（已全部排入或筛选为空）</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="emoji">📭</div><div>无可排行（已全部排入或筛选为空）</div></div></td></tr>`;
   } else {
     tbody.innerHTML = list
       .map((p) => {
         const checked = state.selectedPool.has(p.id) ? 'checked' : '';
-        const short = p.name.length > 10 ? `${p.name.slice(0, 10)}…` : p.name;
+        const short = p.name.length > 12 ? `${p.name.slice(0, 12)}…` : p.name;
         return `<tr class="${checked ? 'selected' : ''}" data-id="${escapeHtml(p.id)}">
           <td><input type="checkbox" data-pool="${escapeHtml(p.id)}" ${checked}></td>
-          <td>${p.urgent ? '<span class="tag tag-urgent">加急</span>' : ''}
-              ${p.useCab21 || p.pendingAllow ? pendingTag() : ''}
-              ${p.suggest ? `<span class="tag tag-purple" title="${escapeHtml(p.suggest)}">拼</span>` : ''}
-              ${needsSplit(p, state.config) ? '<span class="tag tag-orange">需拆炉</span>' : ''}
-          </td>
           <td class="mono">${escapeHtml(p.id)}</td>
-          <td title="${escapeHtml(p.name)}">${escapeHtml(short)}</td>
-          <td>${escapeHtml(p.process)}</td>
-          <td>${escapeHtml(p.customer.replace('C-', ''))}</td>
-          <td>${p.boxes}</td>
-          <td><strong>${p.vol}</strong></td>
-          <td class="hint">${escapeHtml(p.allowed.join('/'))}</td>
+          <td class="pool-name-cell" title="${escapeHtml(p.name)}">
+            ${needsSplit(p, state.config) ? '<span class="tag tag-orange">需拆炉</span> ' : ''}
+            ${p.suggest ? `<span class="tag tag-purple" title="${escapeHtml(p.suggest)}">拼</span> ` : ''}
+            <strong>${escapeHtml(short)}</strong>
+            <div class="sub">${escapeHtml(p.process)} · ${p.boxes}箱 · <strong>${p.vol}</strong> m³ · ${escapeHtml(p.customer.replace('C-', ''))}</div>
+          </td>
+          <td class="facts-cell">${factStripHtml(p)}</td>
         </tr>`;
       })
       .join('');
@@ -494,8 +727,24 @@ function renderWorkbench(): void {
         const hasWarn = fissues.some((i) => i.sev === 'warning');
         const cab = cabinetById(fu.cabinetId);
         const sel = state.selectedFurnaceId === fu.id ? 'selected' : '';
+        const showManualBar = fu.manualViolation || (scheduleMode() === 'manual' && hasErr);
+        const showNeedFix = scheduleMode() === 'auto' && hasErr;
         const borderCls = hasErr ? 'has-error' : hasWarn ? 'has-warn' : '';
-        return `<div class="furnace-card ${sel} ${borderCls}" data-fid="${escapeHtml(fu.id)}">
+        const manualCls = showManualBar || showNeedFix ? 'has-manual' : '';
+        const note = state.config.overrideNotes?.[fu.id] || '';
+        const cabOpts = usableCabinets()
+          .map(
+            (c) =>
+              `<option value="${escapeHtml(c.id)}" ${c.id === fu.cabinetId ? 'selected' : ''}>${escapeHtml(c.id)}</option>`,
+          )
+          .join('');
+        const violationBar = showNeedFix
+          ? '<div class="furnace-violation need-fix">需手工处理或改回合法</div>'
+          : showManualBar
+            ? '<div class="furnace-violation">手工违例</div>'
+            : '';
+        return `<div class="furnace-card ${sel} ${borderCls} ${manualCls}" data-fid="${escapeHtml(fu.id)}">
+          ${violationBar}
           <div class="furnace-hd" data-select-furnace="${escapeHtml(fu.id)}">
             <div>
               <div class="fname">${escapeHtml(fu.cabinetId)}
@@ -509,6 +758,7 @@ function renderWorkbench(): void {
                 <span>目标 ≥${target}</span>
               </div>
               <div class="progress-bar"><div class="fill ${fillClass}" style="width:${pct}%"></div></div>
+              <select class="select cab-change" data-change-cab="${escapeHtml(fu.id)}" title="改柜">${cabOpts}</select>
             </div>
           </div>
           <div class="furnace-body">
@@ -536,6 +786,13 @@ function renderWorkbench(): void {
               .join('')}
             ${fissues.length > 3 ? `<span class="tag tag-default">+${fissues.length - 3}</span>` : ''}
           </div>
+          ${
+            showManualBar || showNeedFix
+              ? `<div class="furnace-actions" style="flex-direction:column;align-items:stretch">
+            <input class="input override-note" data-override-note="${escapeHtml(fu.id)}" placeholder="违例原因（建议填写）" value="${escapeHtml(note)}" />
+          </div>`
+              : ''
+          }
           <div class="furnace-actions">
             <button class="btn btn-sm btn-danger" data-del-furnace="${escapeHtml(fu.id)}">删除炉次</button>
           </div>
@@ -568,6 +825,7 @@ function renderPool(): void {
             ${p.useCab21 ? pendingTag('含柜21') : ''}
             ${p.splitOf ? '' : ''}
         </td>
+        <td class="facts-cell">${factStripHtml(p)}</td>
         <td>${escapeHtml(p.customer)}</td>
         <td>${escapeHtml(p.due)}</td>
         <td class="mono">${escapeHtml(p.wo)}</td>
@@ -665,30 +923,35 @@ function renderValidation(): void {
   });
   state.fpLoads = built.loads;
   state.fpConflicts = built.conflicts;
-  const issues = collectIssues();
+  const raw = collectIssues();
+  const issues = filterAndSortIssues(raw, state.furnaces, state.valFilter);
   const box = $('#issueList');
-  $('#valErr').textContent = String(issues.filter((i) => i.sev === 'error').length);
-  $('#valWarn').textContent = String(issues.filter((i) => i.sev === 'warning').length);
-  $('#valInfo').textContent = String(issues.filter((i) => i.sev === 'info').length);
+  $('#valErr').textContent = String(raw.filter((i) => i.sev === 'error').length);
+  $('#valWarn').textContent = String(raw.filter((i) => i.sev === 'warning').length);
+  $('#valInfo').textContent = String(raw.filter((i) => i.sev === 'info').length);
+  $$('#valFilterTabs .shift-tab').forEach((t) => t.classList.toggle('active', t.dataset.valFilter === state.valFilter));
+  const viol = new Set(state.furnaces.filter((f) => f.manualViolation).map((f) => f.id));
   if (!issues.length) {
-    box.innerHTML = `<div class="empty"><div class="emoji">✅</div><div>当前班次无校验问题</div><div class="hint">在工作台分配炉次后点击「运行校验」</div></div>`;
+    box.innerHTML = `<div class="empty"><div class="emoji">✅</div><div>${raw.length ? '当前筛选下无条目' : '当前班次无校验问题'}</div><div class="hint">在工作台分配炉次后点击「运行校验」</div></div>`;
     return;
   }
   box.innerHTML = issues
-    .map(
-      (i) => `
-      <div class="issue-item" data-jump="${escapeHtml(i.furnaceId || '')}">
+    .map((i) => {
+      const manual = Boolean(i.furnaceId && viol.has(i.furnaceId));
+      return `
+      <div class="issue-item ${manual ? 'manual-hit' : ''}" data-jump="${escapeHtml(i.furnaceId || '')}">
         <div class="issue-sev">
           <span class="tag ${i.sev === 'error' ? 'tag-red' : i.sev === 'warning' ? 'tag-orange' : 'tag-blue'}">
             ${i.sev === 'error' ? '错误' : i.sev === 'warning' ? '警告' : '信息'}
           </span>
+          ${manual ? '<span class="tag tag-red">手工违例</span>' : ''}
         </div>
         <div class="issue-body">
           <div class="msg">${escapeHtml(i.msg)}</div>
-          <div class="meta">代码 ${escapeHtml(i.code)}${i.furnaceId ? ` · 炉次 ${escapeHtml(i.furnaceId)}` : ''}${i.pendingFlag ? ' · 待确认' : ''} · 点击跳转工作台</div>
+          <div class="meta">代码 ${escapeHtml(i.code)}${i.furnaceId ? ` · 炉次 ${escapeHtml(i.furnaceId)}` : ''}${i.pendingFlag ? ' · 待确认' : ''}${i.scheduleModeAtDetect ? ` · 检测时 ${i.scheduleModeAtDetect === 'manual' ? '手工调整' : '自动排产'}` : ''} · 点击跳转工作台</div>
         </div>
-      </div>`,
-    )
+      </div>`;
+    })
     .join('');
 }
 
@@ -876,6 +1139,16 @@ function bind(): void {
       render();
     });
   });
+  $$('#scheduleModeTabs .shift-tab').forEach((t) => {
+    t.addEventListener('click', () => {
+      const mode = t.dataset.mode === 'manual' ? 'manual' : 'auto';
+      setScheduleMode(mode);
+    });
+  });
+  $opt('#factDrawerClose')?.addEventListener('click', closeFactDrawer);
+  $opt('#factDrawerMask')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeFactDrawer();
+  });
   $('#btnAssign').addEventListener('click', assignSelected);
   $('#btnSuggest').addEventListener('click', suggestCombine);
   $('#btnSplit').addEventListener('click', openSplitWizard);
@@ -964,7 +1237,18 @@ function bind(): void {
   });
 
   document.addEventListener('change', (e) => {
-    const cb = (e.target as HTMLElement).closest('[data-pool]') as HTMLInputElement | null;
+    const t = e.target as HTMLElement;
+    const cabSel = t.closest('[data-change-cab]') as HTMLSelectElement | null;
+    if (cabSel) {
+      changeFurnaceCabinet(cabSel.dataset.changeCab!, cabSel.value);
+      return;
+    }
+    const noteInp = t.closest('[data-override-note]') as HTMLInputElement | null;
+    if (noteInp) {
+      saveOverrideNote(noteInp.dataset.overrideNote!, noteInp.value);
+      return;
+    }
+    const cb = t.closest('[data-pool]') as HTMLInputElement | null;
     if (cb) {
       const id = cb.dataset.pool!;
       if (cb.checked) state.selectedPool.add(id);
@@ -975,6 +1259,19 @@ function bind(): void {
 
   document.addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
+    const fact = t.closest('[data-fact-open]') as HTMLElement | null;
+    if (fact?.dataset.factOpen) {
+      e.preventDefault();
+      openFactDrawer(fact.dataset.factOpen);
+      return;
+    }
+    const vf = t.closest('[data-val-filter]') as HTMLElement | null;
+    if (vf?.dataset.valFilter) {
+      state.valFilter = vf.dataset.valFilter as IssueFilter;
+      renderValidation();
+      return;
+    }
+    if (t.closest('[data-change-cab], [data-override-note]')) return;
     const sel = t.closest('[data-select-furnace]') as HTMLElement | null;
     if (sel) {
       state.selectedFurnaceId = sel.dataset.selectFurnace!;
@@ -1072,6 +1369,7 @@ export function bootApp(): void {
     virtualLines: loaded.virtualLines,
     planSeedVersion: loaded.planSeedVersion,
     pool,
+    valFilter: 'all',
   };
   bind();
   navigate('workbench');
