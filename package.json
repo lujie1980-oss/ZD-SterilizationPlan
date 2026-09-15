@@ -1,0 +1,20 @@
+{
+  "name": "zd-sterilization-plan",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "振德医疗 · 灭菌中心排产 MVP",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  }
+}
