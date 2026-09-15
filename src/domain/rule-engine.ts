@@ -1,4 +1,4 @@
-import { processMinLoad } from '../data/seed-processes';
+import { effectiveMinLoadM3 } from './min-load';
 import type { FurnaceRun, RuleContext, ValidationIssue } from './entities';
 import { ISSUE_CODES } from './entities';
 import { furnaceBoxes, furnaceCustomers, furnaceVol } from './pool';
@@ -63,12 +63,7 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
     });
   }
 
-  const min = processMinLoad(
-    primaryProcess,
-    ctx.config.load.d002MinM3,
-    ctx.config.load.defaultMinM3,
-    ctx.processes,
-  );
+  const min = effectiveMinLoadM3(primaryProcess, ctx.config, ctx.processes);
 
   if (primaryProcess === 'D002' && vol < min) {
     issues.push({

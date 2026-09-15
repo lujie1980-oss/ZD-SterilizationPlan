@@ -1,6 +1,6 @@
 # 振德医疗 · 灭菌中心排产 MVP
 
-许昌灭菌中心 EO 自有柜：**待灭菌合格库存 → 日装炉 → 进炉多日甘特**。本仓库为 Vite + TypeScript SPA，对齐详细设计 v1.1 与原型交互。演示种子数据，无真实 SAP/WMS 后端。
+许昌灭菌中心 EO 自有柜：**待灭菌合格库存 → 日装炉 → 进炉多日甘特**。本仓库为 Vite + TypeScript SPA，对齐详细设计 v1.2 与原型交互。演示种子数据，无真实 SAP/WMS 后端。
 
 ## 运行
 
@@ -32,7 +32,7 @@ VITE_ENABLE_DEMO_SEED=false npm run build
 4. **进炉计划**：同步装炉结果 → 甘特分段条 → 点柜看顺序队列；视野 7/14/21。
 5. **校验中心 / 主数据**：错误跳转炉次；柜 21、亚澳、EO 通用带琥珀色「待确认」。
 6. **导出**：顶栏「导出日计划 CSV」（进炉页隐藏）；UTF-8 BOM。
-7. **D002 最低体积配置**：工作台「周期/阈值」把 D002 最低 m³ 改为例如 `30`，将体积约 40m³ 的 D002 分到柜 9 再运行校验——`D002_MIN` 应按 **30** 判定（不再锁死种子 56）；改回 `50` 后低于 50 的炉次重新告警。
+7. **D002 最低拼载（v1.2）**：工作台「D002 最低拼载 (m³)」改为 `30` 后立刻影响校验与建议拼炉目标。约 40m³ 的 D002 分到柜 9 → `D002_MIN` 按 **30** 判定；改回 `50` 后低于 50 再告警。正式字段 `config.minLoadM3ByProcess.D002`，旧字段 `d002MinLoadM3` 读入迁移。
 
 ## 模块地图
 
@@ -45,7 +45,7 @@ src/
     split-wizard.ts      # 拆炉虚拟行
     suggest-combine.ts   # D002 → 柜9 演示拼炉
     export-csv.ts        # 日计划 CSV
-    pool.ts / dates.ts
+    pool.ts / dates.ts / min-load.ts  # 生效拼载（minLoadM3ByProcess）
   data/
     seed-cabinets.ts / seed-processes.ts / seed-pool.ts / seed-boxspecs.ts
     seed-demo-plan.ts
@@ -74,7 +74,9 @@ src/
 | `cycle.sterilizeDays` | 1 | 灭菌示意 |
 | `cycle.biDays` | 2 | BI 示意（工作台可改，甘特随之变） |
 | `cycle.nightSterilizeOffsetDays` | 0.5 | 夜班灭菌起点错开 |
-| `load.d002MinM3` | 56 | D002 最低拼载 |
+| `config.minLoadM3ByProcess` | `{ D002: 56 }` | v1.2 正式：按工艺覆盖最低拼载 |
+| `d002MinLoadM3` | 56 | 旧字段；读入迁移到 map，写出与 D002 同步 |
+| `Process.minLoadM3` | D002=56 | 工艺主数据默认；无 map 项时回退 |
 | `load.defaultMinM3` | 60 | 其他目标拼载 |
 | `box.largeBoxVol` | 0.12 | 大箱阈值 m³ |
 | `box.maxBoxesWhenLarge` | 280 | 大箱每炉箱数上限（&gt;280 才 BOX_LIMIT） |

@@ -134,7 +134,6 @@ export interface CycleConfig {
 }
 
 export interface LoadConfig {
-  d002MinM3: number;
   defaultMinM3: number;
   loadMetric: 'grossVolume' | 'effectiveVolume';
 }
@@ -154,6 +153,10 @@ export interface AppConfig {
   allowFiller: boolean;
   mixCustomerWarn: boolean;
   showPendingTags: boolean;
+  /** 方案 v1.2 正式字段：按工艺覆盖最低拼载，如 `{ D002: 56 }` */
+  minLoadM3ByProcess: Record<string, number>;
+  /** 旧字段，读入迁移；写出时与 D002 同步，便于对照原型 */
+  d002MinLoadM3?: number;
   cycle: CycleConfig;
   load: LoadConfig;
   box: BoxConfig;
@@ -166,6 +169,12 @@ export interface AppConfig {
   mix: { customer: 'warn' | 'forbid' | 'off' };
 }
 
+export type LegacyConfigInput = Partial<AppConfig> & {
+  d002MinLoadM3?: number;
+  minLoadM3ByProcess?: Record<string, number>;
+  load?: Partial<LoadConfig> & { d002MinM3?: number };
+};
+
 export interface PlanSnapshot {
   version?: number;
   date: string;
@@ -173,11 +182,7 @@ export interface PlanSnapshot {
   furnaces: FurnaceRun[];
   nextFurnaceSeq: number;
   virtualLines: StockLine[];
-  config: Partial<AppConfig> & {
-    allowFiller?: boolean;
-    mixCustomerWarn?: boolean;
-    showPendingTags?: boolean;
-  };
+  config: LegacyConfigInput;
   planSeedVersion: number;
 }
 

@@ -253,6 +253,38 @@ describe('plan-store-v2', () => {
     expect(Array.isArray(snap.virtualLines)).toBe(true);
     expect(snap.virtualLines[0]?.id).toBe('P004-A');
   });
+
+  it('persists minLoadM3ByProcess and migrates legacy d002MinLoadM3 on load', () => {
+    savePlan({
+      date: '2026-07-24',
+      shift: '白班',
+      furnaces: [],
+      nextFurnaceSeq: 1,
+      virtualLines: [],
+      config: { ...defaultAppConfig(), minLoadM3ByProcess: { D002: 42 }, d002MinLoadM3: 42 },
+      planSeedVersion: 2,
+      sparseWiped: false,
+    });
+    const loaded = loadPlan();
+    expect(loaded.config.minLoadM3ByProcess.D002).toBe(42);
+    expect(loaded.config.d002MinLoadM3).toBe(42);
+
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        date: '2026-07-24',
+        shift: '白班',
+        furnaces: [],
+        nextFurnaceSeq: 1,
+        virtualLines: [],
+        config: { d002MinLoadM3: 37 },
+        planSeedVersion: 2,
+      }),
+    );
+    const migrated = loadPlan();
+    expect(migrated.config.minLoadM3ByProcess.D002).toBe(37);
+    expect(migrated.config.d002MinLoadM3).toBe(37);
+  });
 });
 
 describe('eligibility', () => {

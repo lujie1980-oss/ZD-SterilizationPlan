@@ -1,4 +1,4 @@
-import type { AppConfig } from '../domain/entities';
+import type { AppConfig, LegacyConfigInput, LoadConfig } from '../domain/entities';
 
 export const STORAGE_KEY = 'zhende_sterilization_plan_v2';
 export const STORAGE_KEY_LEGACY = 'zhende_sterilization_plan_v1';
@@ -7,6 +7,7 @@ export const DEMO_MIN_CABINETS = 5;
 export const DEMO_MIN_LOADS = 5;
 export const DEFAULT_DATE = '2026-07-24';
 export const DEFAULT_SHIFT = '白班' as const;
+export const DEFAULT_D002_MIN_M3 = 56;
 
 export const CSV_HEADERS = [
   '日期',
@@ -34,11 +35,33 @@ export function isDemoSeedEnabled(cfg?: AppConfig): boolean {
   return true;
 }
 
+function finiteNumber(v: unknown): number | undefined {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** 读入 minLoadM3ByProcess，兼容 d002MinLoadM3 / 旧 load.d002MinM3 */
+export function migrateMinLoadM3ByProcess(partial?: LegacyConfigInput | null): Record<string, number> {
+  const map: Record<string, number> = { D002: DEFAULT_D002_MIN_M3 };
+  const legacy =
+    finiteNumber(partial?.d002MinLoadM3) ?? finiteNumber(partial?.load && (partial.load as { d002MinM3?: number }).d002MinM3);
+  if (legacy != null) map.D002 = legacy;
+  if (partial?.minLoadM3ByProcess) {
+    for (const [code, value] of Object.entries(partial.minLoadM3ByProcess)) {
+      const n = finiteNumber(value);
+      if (n != null) map[code] = n;
+    }
+  }
+  return map;
+}
+
 export function defaultAppConfig(): AppConfig {
   return {
     allowFiller: false,
     mixCustomerWarn: true,
     showPendingTags: true,
+    minLoadM3ByProcess: { D002: DEFAULT_D002_MIN_M3 },
+    d002MinLoadM3: DEFAULT_D002_MIN_M3,
     cycle: {
       preheatDays: 0.5,
       sterilizeDays: 1,
@@ -46,7 +69,6 @@ export function defaultAppConfig(): AppConfig {
       nightSterilizeOffsetDays: 0.5,
     },
     load: {
-      d002MinM3: 56,
       defaultMinM3: 60,
       loadMetric: 'grossVolume',
     },
@@ -68,14 +90,19 @@ export function defaultAppConfig(): AppConfig {
   };
 }
 
-export function mergeConfig(partial?: Partial<AppConfig> | null): AppConfig {
+export function mergeConfig(partial?: LegacyConfigInput | null): AppConfig {
   const base = defaultAppConfig();
   if (!partial) return base;
+  const minLoadM3ByProcess = migrateMinLoadM3ByProcess(partial);
+  const loadRest = { ...(partial.load ?? {}) } as Partial<LoadConfig> & { d002MinM3?: number };
+  delete loadRest.d002MinM3;
   return {
     ...base,
     ...partial,
+    minLoadM3ByProcess,
+    d002MinLoadM3: minLoadM3ByProcess.D002 ?? base.d002MinLoadM3,
     cycle: { ...base.cycle, ...(partial.cycle ?? {}) },
-    load: { ...base.load, ...(partial.load ?? {}) },
+    load: { ...base.load, ...loadRest },
     box: { ...base.box, ...(partial.box ?? {}) },
     eligibility: {
       locations: partial.eligibility?.locations ?? base.eligibility.locations,
@@ -87,5 +114,22 @@ export function mergeConfig(partial?: Partial<AppConfig> | null): AppConfig {
     demo: { ...base.demo, ...(partial.demo ?? {}) },
     fp: { ...base.fp, ...(partial.fp ?? {}) },
     mix: { ...base.mix, ...(partial.mix ?? {}) },
+  };
+}
+
+/** 写出时同时带正式字段与旧字段，便于原型/旧客户端回退读取 */
+export function persistableConfig(config: AppConfig): AppConfig {
+  const minLoadM3ByProcess = { ...config.minLoadM3ByProcess };
+  if (minLoadM3ByProcess.D002 == null && config.d002MinLoadM3 != null) {
+    minLoadM3ByProcess.D002 = config.d002MinLoadM3;
+  }
+  return {
+    ...config,
+    minLoadM3ByProcess,
+    d002MinLoadM3: minLoadM3ByProcess.D002 ?? config.d002MinLoadM3 ?? DEFAULT_D002_MIN_M3,
+    load: {
+      defaultMinM3: config.load.defaultMinM3,
+      loadMetric: config.load.loadMetric,
+    },
   };
 }

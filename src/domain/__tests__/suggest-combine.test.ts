@@ -43,4 +43,21 @@ describe('suggest-combine', () => {
     expect(f!.lines.length).toBeGreaterThanOrEqual(2);
     expect(f!.lines.every((id) => pool.find((p) => p.id === id)?.process === 'D002')).toBe(true);
   });
+
+  it('stops after one D002 row when the effective minLoad is already met', () => {
+    const pool = createSeedPool();
+    const { result, furnaces } = suggestCombineD002Cab9({
+      pool,
+      furnaces: [],
+      assigned: new Set(),
+      date: '2026-07-24',
+      shift: '白班',
+      nextSeq: 1,
+      minLoad: 10,
+      poolById: (id) => pool.find((p) => p.id === id),
+    });
+    expect(result.ok).toBe(true);
+    const f = furnaces.find((x) => x.cabinetId === '柜9');
+    expect(f?.lines).toEqual(['P001']);
+  });
 });

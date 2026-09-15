@@ -7,6 +7,7 @@ import {
   defaultAppConfig,
   isDemoSeedEnabled,
   mergeConfig,
+  persistableConfig,
 } from '../data/config-defaults';
 import type { AppConfig, FurnaceRun, PlanSnapshot, Shift, StockLine } from '../domain/entities';
 import { isPlanSparse } from '../domain/pool';
@@ -55,7 +56,7 @@ export function serializePlan(plan: LoadedPlan): PlanSnapshot {
     furnaces: plan.furnaces,
     nextFurnaceSeq: plan.nextFurnaceSeq,
     virtualLines: plan.virtualLines,
-    config: plan.config,
+    config: persistableConfig(plan.config),
     planSeedVersion: plan.planSeedVersion,
   };
 }

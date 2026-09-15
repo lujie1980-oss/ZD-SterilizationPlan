@@ -9,11 +9,12 @@ import { BOX_SPEC_CONCEPT_COUNT, BOX_SPECS } from '../data/seed-boxspecs';
 import { CABINETS, cabinetById, usableCabinets } from '../data/seed-cabinets';
 import { getDemoFurnaceSeed } from '../data/seed-demo-plan';
 import { createSeedPool } from '../data/seed-pool';
-import { PROCESSES, processMinLoad } from '../data/seed-processes';
+import { PROCESSES } from '../data/seed-processes';
 import { addDays, dayOffset, fmtDate, fmtDateTime } from '../domain/dates';
 import type { AppConfig, EntryLoad, FurnaceRun, Shift, StockLine, ValidationIssue } from '../domain/entities';
 import { buildEntryLoads } from '../domain/entry-scheduler';
 import { buildDayPlanCsv } from '../domain/export-csv';
+import { effectiveMinLoadM3, setProcessMinLoad } from '../domain/min-load';
 import {
   assignedIds,
   currentFurnaces,
@@ -87,9 +88,7 @@ function poolById(id: string): StockLine | undefined {
 function ruleCtx(sameShift = currentFurnaces(state.furnaces, state.date, state.shift)) {
   return {
     cabinets: CABINETS,
-    processes: PROCESSES.map((p) =>
-      p.code === 'D002' ? { ...p, minLoadM3: state.config.load.d002MinM3 } : p,
-    ),
+    processes: PROCESSES,
     poolById,
     config: state.config,
     sameShiftFurnaces: sameShift,
@@ -97,7 +96,7 @@ function ruleCtx(sameShift = currentFurnaces(state.furnaces, state.date, state.s
 }
 
 function minTarget(process: string): number {
-  return processMinLoad(process, state.config.load.d002MinM3, state.config.load.defaultMinM3, PROCESSES);
+  return effectiveMinLoadM3(process, state.config, PROCESSES);
 }
 
 function pendingTag(text?: string): string {
@@ -238,7 +237,7 @@ function suggestCombine(): void {
     date: state.date,
     shift: state.shift,
     nextSeq: state.nextFurnaceSeq,
-    minLoad: state.config.load.d002MinM3,
+    minLoad: effectiveMinLoadM3('D002', state.config, PROCESSES),
     poolById,
   });
   if (!result.ok) {
@@ -416,7 +415,9 @@ function renderWorkbench(): void {
   ($('#cfgPreheat') as HTMLInputElement).value = String(state.config.cycle.preheatDays);
   ($('#cfgSterilize') as HTMLInputElement).value = String(state.config.cycle.sterilizeDays);
   ($('#cfgBiDays') as HTMLInputElement).value = String(state.config.cycle.biDays);
-  ($('#cfgD002Min') as HTMLInputElement).value = String(state.config.load.d002MinM3);
+  ($('#cfgD002Min') as HTMLInputElement).value = String(
+    effectiveMinLoadM3('D002', state.config, PROCESSES),
+  );
   ($('#cfgDefaultMin') as HTMLInputElement).value = String(state.config.load.defaultMinM3);
 
   let list = visibleUnassignedPool(state.pool, state.furnaces, state.config);
@@ -630,7 +631,7 @@ function renderBoxSpecs(): void {
     </div>
     <div class="rule-card">
       <h4>D002 最低拼载</h4>
-      <p>单炉体积目标 <strong>≥ ${cfg.load.d002MinM3} m³</strong>。不足时告警，建议与同工艺拼货。</p>
+      <p>单炉体积目标 <strong>≥ ${effectiveMinLoadM3('D002', cfg, PROCESSES)} m³</strong>。不足时告警，建议与同工艺拼货。</p>
     </div>
     <div class="rule-card">
       <h4>其他工艺目标拼载</h4>
@@ -956,7 +957,7 @@ function bind(): void {
     state.config.cycle.biDays = n;
   });
   bindNum('#cfgD002Min', (n) => {
-    state.config.load.d002MinM3 = n;
+    state.config = setProcessMinLoad(state.config, 'D002', n);
   });
   bindNum('#cfgDefaultMin', (n) => {
     state.config.load.defaultMinM3 = n;
