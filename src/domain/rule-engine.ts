@@ -52,6 +52,7 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
   }
 
   const { largeBoxVol, maxBoxesWhenLarge } = ctx.config.box;
+  // v1.3 / 口径 2：只统计大箱箱数合计，炉总箱数不触发 BOX_LIMIT
   const largeBoxes = largeBoxCount(lines, largeBoxVol);
   if (largeBoxes > maxBoxesWhenLarge) {
     issues.push({
