@@ -302,7 +302,7 @@ function showSplitModal(line: StockLine): void {
           <select class="select" id="splitCab" style="width:100%;margin-top:4px">${cabOpts}</select>
         </div>
         <p class="hint">单箱体积 ${line.boxVol} m³ · 工艺 ${escapeHtml(line.process)}
-          ${line.boxVol >= state.config.box.largeBoxVol ? ` · <span class="tag tag-pending">单箱≥${state.config.box.largeBoxVol} → 每炉≤${state.config.box.maxBoxesWhenLarge}箱</span>` : ''}
+          ${line.boxVol >= state.config.box.largeBoxVol ? ` · <span class="tag tag-pending">大箱（单箱≥${state.config.box.largeBoxVol}）合计 ≤${state.config.box.maxBoxesWhenLarge}箱/炉</span>` : ''}
         </p>
       </div>
       <div class="modal-ft">
@@ -626,8 +626,8 @@ function renderBoxSpecs(): void {
   $('#boxSpecSample').textContent = String(BOX_SPECS.length);
   $('#boxRuleGrid').innerHTML = `
     <div class="rule-card">
-      <h4>单箱 ≥ ${cfg.box.largeBoxVol} m³</h4>
-      <p>触发每炉箱数上限 <strong>≤ ${cfg.box.maxBoxesWhenLarge} 箱</strong>。超限须拆炉或减载。</p>
+      <h4>大箱 单箱 ≥ ${cfg.box.largeBoxVol} m³</h4>
+      <p>只统计大箱箱数合计，上限 <strong>≤ ${cfg.box.maxBoxesWhenLarge} 箱</strong>。炉总箱数不触发；超限须拆炉或减载。</p>
     </div>
     <div class="rule-card">
       <h4>D002 最低拼载</h4>
@@ -647,7 +647,7 @@ function renderBoxSpecs(): void {
         <td class="mono">${escapeHtml(b.sku)}</td>
         <td>${escapeHtml(b.name)}</td>
         <td><strong>${b.vol}</strong> m³</td>
-        <td>${b.vol >= cfg.box.largeBoxVol ? `<span class="tag tag-orange">≥${cfg.box.largeBoxVol} → ≤${cfg.box.maxBoxesWhenLarge}箱/炉</span>` : '<span class="tag tag-green">常规</span>'}
+        <td>${b.vol >= cfg.box.largeBoxVol ? `<span class="tag tag-orange">大箱合计 ≤${cfg.box.maxBoxesWhenLarge}箱/炉</span>` : '<span class="tag tag-green">常规</span>'}
             ${b.note ? `<span class="hint"> ${escapeHtml(b.note)}</span>` : ''}
         </td>
       </tr>`,

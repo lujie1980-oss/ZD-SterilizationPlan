@@ -73,7 +73,9 @@ export function defaultAppConfig(): AppConfig {
       loadMetric: 'grossVolume',
     },
     box: {
+      /** 大箱单箱体积阈值（m³） */
       largeBoxVol: 0.12,
+      /** v1.3：每炉大箱合计上限，炉总箱数不触发 BOX_LIMIT */
       maxBoxesWhenLarge: 280,
       boardsPerFurnaceHint: 30,
     },

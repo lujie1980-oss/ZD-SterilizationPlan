@@ -16,6 +16,11 @@ export function furnaceBoxes(f: FurnaceRun, poolById: (id: string) => StockLine 
   return f.lines.reduce((s, id) => s + (poolById(id)?.boxes || 0), 0);
 }
 
+/** v1.3：大箱箱数合计（boxVol ≥ largeBoxVol）；炉总箱数不计入 BOX_LIMIT。 */
+export function largeBoxCount(lines: Array<Pick<StockLine, 'boxVol' | 'boxes'>>, largeBoxVol: number): number {
+  return lines.reduce((s, l) => s + (l.boxVol >= largeBoxVol ? l.boxes : 0), 0);
+}
+
 export function furnaceCustomers(f: FurnaceRun, poolById: (id: string) => StockLine | undefined): string[] {
   return [...new Set(f.lines.map((id) => poolById(id)?.customer).filter((c): c is string => Boolean(c)))];
 }
@@ -30,6 +35,7 @@ export function currentFurnaces(furnaces: FurnaceRun[], date: string, shift: str
   return furnaces.filter((f) => f.date === date && f.shift === shift && !f.hidden);
 }
 
+/** 单行是否需拆：超体积、或该行自身大箱箱数已超每炉大箱上限。 */
 export function needsSplit(line: StockLine, cfg: AppConfig): boolean {
   return Boolean(
     line.oversized ||

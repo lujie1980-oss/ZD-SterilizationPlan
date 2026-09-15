@@ -85,30 +85,77 @@ describe('rule-engine', () => {
     expect(issues.some((i) => i.code === 'CABINET_MISMATCH')).toBe(true);
   });
 
-  it('emits BOX_LIMIT error when large boxes exceed 280', () => {
+  it('emits BOX_LIMIT when large-box count exceeds maxBoxesWhenLarge', () => {
+    const { largeBoxVol, maxBoxesWhenLarge } = defaultAppConfig().box;
     const l = line({
       id: 'Pbig',
       process: '手术衣',
       allowed: ['柜8'],
-      boxes: 281,
-      boxVol: 0.12,
+      boxes: maxBoxesWhenLarge + 1,
+      boxVol: largeBoxVol,
       name: '大箱',
     });
     const issues = validateFurnace(run({ cabinetId: '柜8', lines: ['Pbig'] }), ctx([l]));
     const hit = issues.find((i) => i.code === 'BOX_LIMIT');
     expect(hit?.sev).toBe('error');
+    expect(hit?.msg).toContain(String(maxBoxesWhenLarge + 1));
   });
 
-  it('does not emit BOX_LIMIT at the 280 boundary', () => {
+  it('does not emit BOX_LIMIT when large-box count equals maxBoxesWhenLarge', () => {
+    const { largeBoxVol, maxBoxesWhenLarge } = defaultAppConfig().box;
     const l = line({
       id: 'Pedge',
       process: '手术衣',
       allowed: ['柜8'],
-      boxes: 280,
-      boxVol: 0.12,
+      boxes: maxBoxesWhenLarge,
+      boxVol: largeBoxVol,
     });
     const issues = validateFurnace(run({ cabinetId: '柜8', lines: ['Pedge'] }), ctx([l]));
     expect(issues.some((i) => i.code === 'BOX_LIMIT')).toBe(false);
+  });
+
+  it('does not emit BOX_LIMIT for mixed large+small when large boxes ≤ 280 even if furnace total is 500–700', () => {
+    const { largeBoxVol, maxBoxesWhenLarge } = defaultAppConfig().box;
+    const large = line({
+      id: 'L',
+      process: '手术衣',
+      allowed: ['柜8'],
+      boxes: maxBoxesWhenLarge,
+      boxVol: largeBoxVol,
+    });
+    const small = line({
+      id: 'S',
+      process: '手术衣',
+      allowed: ['柜8'],
+      boxes: 420,
+      boxVol: 0.10,
+    });
+    const issues = validateFurnace(run({ cabinetId: '柜8', lines: ['L', 'S'] }), ctx([large, small]));
+    expect(issues.some((i) => i.code === 'BOX_LIMIT')).toBe(false);
+  });
+
+  it('does not emit BOX_LIMIT for small boxes only, even above 280', () => {
+    const small = line({
+      id: 'S',
+      process: '手术衣',
+      allowed: ['柜8'],
+      boxes: 500,
+      boxVol: 0.10,
+    });
+    const issues = validateFurnace(run({ cabinetId: '柜8', lines: ['S'] }), ctx([small]));
+    expect(issues.some((i) => i.code === 'BOX_LIMIT')).toBe(false);
+  });
+
+  it('sums large-box counts across lines and ignores small boxes in BOX_LIMIT', () => {
+    const { largeBoxVol } = defaultAppConfig().box;
+    const a = line({ id: 'A', process: '手术衣', allowed: ['柜8'], boxes: 150, boxVol: largeBoxVol });
+    const b = line({ id: 'B', process: '手术衣', allowed: ['柜8'], boxes: 150, boxVol: largeBoxVol });
+    const small = line({ id: 'S', process: '手术衣', allowed: ['柜8'], boxes: 200, boxVol: 0.10 });
+    const issues = validateFurnace(run({ cabinetId: '柜8', lines: ['A', 'B', 'S'] }), ctx([a, b, small]));
+    const hit = issues.find((i) => i.code === 'BOX_LIMIT');
+    expect(hit?.sev).toBe('error');
+    expect(hit?.msg).toContain('300');
+    expect(hit?.msg).not.toContain('500');
   });
 
   it('emits D002_MIN warning below 56 m³', () => {

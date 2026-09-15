@@ -1,7 +1,7 @@
 import { effectiveMinLoadM3 } from './min-load';
 import type { FurnaceRun, RuleContext, ValidationIssue } from './entities';
 import { ISSUE_CODES } from './entities';
-import { furnaceBoxes, furnaceCustomers, furnaceVol } from './pool';
+import { furnaceCustomers, furnaceVol, largeBoxCount } from './pool';
 
 export function canAddFurnace(cabinetId: string, ctx: RuleContext): { ok: true } | { ok: false; issue: ValidationIssue } {
   const cab = ctx.cabinets.find((c) => c.id === cabinetId);
@@ -36,7 +36,6 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
   }
 
   const vol = furnaceVol(f, ctx.poolById);
-  const boxes = furnaceBoxes(f, ctx.poolById);
   const processes = [...new Set(lines.map((l) => l.process))];
   const primaryProcess = processes[0]!;
 
@@ -53,12 +52,12 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
   }
 
   const { largeBoxVol, maxBoxesWhenLarge } = ctx.config.box;
-  const hasLargeBox = lines.some((l) => l.boxVol >= largeBoxVol);
-  if (hasLargeBox && boxes > maxBoxesWhenLarge) {
+  const largeBoxes = largeBoxCount(lines, largeBoxVol);
+  if (largeBoxes > maxBoxesWhenLarge) {
     issues.push({
       sev: 'error',
       code: ISSUE_CODES.BOX_LIMIT,
-      msg: `单箱体积≥${largeBoxVol} 时每炉箱数不得超过 ${maxBoxesWhenLarge}（当前 ${boxes} 箱）`,
+      msg: `大箱（单箱≥${largeBoxVol}m³）合计 ${largeBoxes} 箱，超过每炉上限 ${maxBoxesWhenLarge}`,
       furnaceId: f.id,
     });
   }

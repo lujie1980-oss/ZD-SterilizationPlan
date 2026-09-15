@@ -1,6 +1,6 @@
 # 振德医疗 · 灭菌中心排产 MVP
 
-许昌灭菌中心 EO 自有柜：**待灭菌合格库存 → 日装炉 → 进炉多日甘特**。本仓库为 Vite + TypeScript SPA，对齐详细设计 v1.2 与原型交互。演示种子数据，无真实 SAP/WMS 后端。
+许昌灭菌中心 EO 自有柜：**待灭菌合格库存 → 日装炉 → 进炉多日甘特**。本仓库为 Vite + TypeScript SPA，对齐详细设计 v1.3 与原型交互。演示种子数据，无真实 SAP/WMS 后端。
 
 ## 运行
 
@@ -78,8 +78,8 @@ src/
 | `d002MinLoadM3` | 56 | 旧字段；读入迁移到 map，写出与 D002 同步 |
 | `Process.minLoadM3` | D002=56 | 工艺主数据默认；无 map 项时回退 |
 | `load.defaultMinM3` | 60 | 其他目标拼载 |
-| `box.largeBoxVol` | 0.12 | 大箱阈值 m³ |
-| `box.maxBoxesWhenLarge` | 280 | 大箱每炉箱数上限（&gt;280 才 BOX_LIMIT） |
+| `box.largeBoxVol` | 0.12 | 大箱单箱体积阈值 m³ |
+| `box.maxBoxesWhenLarge` | 280 | v1.3：每炉**大箱箱数合计**上限（`sum(boxes where boxVol ≥ largeBoxVol)` &gt;280 才 BOX_LIMIT；炉总箱数不触发） |
 | `box.boardsPerFurnaceHint` | 30 | 经验提示，**非硬约束** |
 | `config.allowFiller` | false | 仅改 TARGET_MIN 文案 |
 | `config.mixCustomerWarn` | true | MIX_CUSTOMER 开关 |
@@ -96,7 +96,7 @@ src/
 
 ## 校验码
 
-**硬**：`CABINET_SCRAPPED`（报废不可添加炉次）、`CABINET_MISMATCH`、`BOX_LIMIT`  
+**硬**：`CABINET_SCRAPPED`（报废不可添加炉次）、`CABINET_MISMATCH`、`BOX_LIMIT`（v1.3：仅大箱合计 &gt; `maxBoxesWhenLarge`；大箱+小箱混炉总箱 500–700 但大箱 ≤280 通过）  
 **软**：`D002_MIN`、`TARGET_MIN`、`MIX_CUSTOMER`、`OVER_CAP`、`OCCUPANCY`、`STERILIZE_OVERLAP`、`PREHEAT_OVERLAP`  
 **信息**：`CAB21`、`PROC_PENDING`
 

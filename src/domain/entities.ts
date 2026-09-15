@@ -139,7 +139,9 @@ export interface LoadConfig {
 }
 
 export interface BoxConfig {
+  /** 大箱单箱体积阈值（m³），默认 0.12 */
   largeBoxVol: number;
+  /** v1.3：每炉大箱箱数上限；只统计 boxVol ≥ largeBoxVol 的箱数合计 */
   maxBoxesWhenLarge: number;
   boardsPerFurnaceHint: number;
 }
