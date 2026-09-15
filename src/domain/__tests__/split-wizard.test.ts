@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { defaultAppConfig } from '../../data/config-defaults';
-import { applySplit, findSplitTarget } from '../split-wizard';
+import { applySplit, ensureSplitFurnaces, findSplitTarget } from '../split-wizard';
 import type { StockLine } from '../entities';
-import { mergeVirtualLinesIntoPool } from '../pool';
+import { isPlanSparse, mergeVirtualLinesIntoPool } from '../pool';
 
 function oversizedLine(): StockLine {
   return {
@@ -68,5 +68,34 @@ describe('split-wizard', () => {
     const merged = mergeVirtualLinesIntoPool([parent], [rowA, rowB]);
     expect(merged.find((p) => p.id === 'P004-A')?.boxes).toBe(140);
     expect(merged.find((p) => p.id === 'P004-B')?.splitOf).toBe('P004');
+  });
+
+  it('does not treat a split session as a sparse demo plan', () => {
+    const parent = oversizedLine();
+    const result = applySplit({
+      parent,
+      boxesA: 140,
+      cabinetId: '柜5',
+      date: '2026-07-24',
+      shift: '白班',
+      nextSeq: 1,
+    });
+    expect(isPlanSparse(result.furnaces, 5, 5, [result.rowA, result.rowB])).toBe(false);
+  });
+
+  it('restores missing *-A/*-B furnaces from virtualLines', () => {
+    const parent = oversizedLine();
+    const { rowA, rowB } = applySplit({
+      parent,
+      boxesA: 140,
+      cabinetId: '柜5',
+      date: '2026-07-24',
+      shift: '白班',
+      nextSeq: 1,
+    });
+    const restored = ensureSplitFurnaces([], [rowA, rowB], 1);
+    const lineIds = restored.furnaces.filter((f) => !f.hidden).flatMap((f) => f.lines);
+    expect(lineIds).toEqual(expect.arrayContaining(['P004-A', 'P004-B']));
+    expect(restored.furnaces.some((f) => f.hidden && f.lines.includes('P004'))).toBe(true);
   });
 });

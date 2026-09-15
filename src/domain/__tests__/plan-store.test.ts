@@ -63,7 +63,125 @@ describe('plan-store-v2', () => {
     expect(merged.find((p) => p.id === 'P004-A')?.boxes).toBe(140);
   });
 
-  it('keeps virtualLines when wiping a sparse snapshot for demo reseed', () => {
+  it('keeps split furnaces after reload even when the snapshot looks sparse (TC-SPLIT-02)', () => {
+    const virtualA = {
+      id: 'P004-A',
+      splitOf: 'P004',
+      boxes: 140,
+      vol: 25.2,
+      boxVol: 0.18,
+      process: 'Z181',
+      customer: 'C-美敦力',
+      allowed: ['柜5', '柜7', '柜15'],
+      date: '2026-07-24',
+      shift: '白班' as const,
+      factory: '3010',
+      workshop: '制造七车间',
+      matType: 'K' as const,
+      ref: 'REF-Z181-01',
+      name: 'Z181 护理套装（拆A）',
+      due: '2026-07-25',
+      wo: 'WO',
+      batch: 'B',
+      loc: '待灭菌仓·新',
+      stockStatus: '非限制',
+      urgent: true,
+      sterilizationMethod: 'EO' as const,
+    };
+    const virtualB = { ...virtualA, id: 'P004-B', name: 'Z181 护理套装（拆B）', boxes: 210, vol: 37.8 };
+    savePlan({
+      date: '2026-07-24',
+      shift: '白班',
+      furnaces: [
+        { id: 'F1', cabinetId: '柜5', date: '2026-07-24', shift: '白班', lines: ['P004-A'] },
+        { id: 'F2', cabinetId: '柜5', date: '2026-07-24', shift: '白班', lines: ['P004-B'] },
+        { id: 'F3', cabinetId: '柜5', date: '2026-07-24', shift: '白班', lines: ['P004'], hidden: true },
+      ],
+      nextFurnaceSeq: 4,
+      virtualLines: [virtualA, virtualB],
+      config: defaultAppConfig(),
+      planSeedVersion: 2,
+      sparseWiped: false,
+    });
+    const loaded = loadPlan();
+    expect(loaded.sparseWiped).toBe(false);
+    expect(loaded.virtualLines.map((v) => v.id).sort()).toEqual(['P004-A', 'P004-B']);
+    const visibleLines = loaded.furnaces.filter((f) => !f.hidden).flatMap((f) => f.lines);
+    expect(visibleLines).toEqual(expect.arrayContaining(['P004-A', 'P004-B']));
+    const merged = mergeVirtualLinesIntoPool(createSeedPool(), loaded.virtualLines);
+    expect(merged.find((p) => p.id === 'P004-A')?.boxes).toBe(140);
+    expect(merged.find((p) => p.id === 'P004-B')?.splitOf).toBe('P004');
+  });
+
+  it('rebuilds *-A/*-B furnaces from virtualLines if a stale wipe left them unassigned', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        date: '2026-07-24',
+        shift: '白班',
+        furnaces: [],
+        nextFurnaceSeq: 1,
+        virtualLines: [
+          {
+            id: 'P004-A',
+            splitOf: 'P004',
+            boxes: 140,
+            vol: 25.2,
+            boxVol: 0.18,
+            process: 'Z181',
+            allowed: ['柜5'],
+            date: '2026-07-24',
+            shift: '白班',
+            customer: 'C-美敦力',
+            factory: '3010',
+            workshop: 'w',
+            matType: 'K',
+            ref: 'R',
+            name: '拆A',
+            due: '2026-07-25',
+            wo: 'WO',
+            batch: 'B',
+            loc: '待灭菌仓·新',
+            stockStatus: '非限制',
+            urgent: true,
+            sterilizationMethod: 'EO',
+          },
+          {
+            id: 'P004-B',
+            splitOf: 'P004',
+            boxes: 210,
+            vol: 37.8,
+            boxVol: 0.18,
+            process: 'Z181',
+            allowed: ['柜5'],
+            date: '2026-07-24',
+            shift: '白班',
+            customer: 'C-美敦力',
+            factory: '3010',
+            workshop: 'w',
+            matType: 'K',
+            ref: 'R',
+            name: '拆B',
+            due: '2026-07-25',
+            wo: 'WO',
+            batch: 'B',
+            loc: '待灭菌仓·新',
+            stockStatus: '非限制',
+            urgent: true,
+            sterilizationMethod: 'EO',
+          },
+        ],
+        config: { allowFiller: false, mixCustomerWarn: true },
+        planSeedVersion: 2,
+      }),
+    );
+    const loaded = loadPlan();
+    expect(loaded.sparseWiped).toBe(false);
+    const visible = loaded.furnaces.filter((f) => !f.hidden).flatMap((f) => f.lines);
+    expect(visible).toEqual(expect.arrayContaining(['P004-A', 'P004-B']));
+  });
+
+  it('still wipes a sparse snapshot when there is no split work', () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -71,7 +189,7 @@ describe('plan-store-v2', () => {
         shift: '白班',
         furnaces: [{ id: 'F1', cabinetId: '柜3', date: '2026-07-24', shift: '白班', lines: ['P007'] }],
         nextFurnaceSeq: 2,
-        virtualLines: [{ id: 'P004-A', splitOf: 'P004', boxes: 140, vol: 25.2, process: 'Z181' }],
+        virtualLines: [],
         config: { allowFiller: false, mixCustomerWarn: true },
         planSeedVersion: 2,
       }),
@@ -79,7 +197,6 @@ describe('plan-store-v2', () => {
     const loaded = loadPlan();
     expect(loaded.sparseWiped).toBe(true);
     expect(loaded.furnaces).toEqual([]);
-    expect(loaded.virtualLines[0]?.id).toBe('P004-A');
   });
 
   it('migrates a rich v1 plan and drops the legacy key', () => {

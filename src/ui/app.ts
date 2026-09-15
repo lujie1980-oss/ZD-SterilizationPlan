@@ -87,7 +87,9 @@ function poolById(id: string): StockLine | undefined {
 function ruleCtx(sameShift = currentFurnaces(state.furnaces, state.date, state.shift)) {
   return {
     cabinets: CABINETS,
-    processes: PROCESSES,
+    processes: PROCESSES.map((p) =>
+      p.code === 'D002' ? { ...p, minLoadM3: state.config.load.d002MinM3 } : p,
+    ),
     poolById,
     config: state.config,
     sameShiftFurnaces: sameShift,
@@ -105,7 +107,7 @@ function pendingTag(text?: string): string {
 
 function seedDemoFurnaceLoadsIfEmpty(): boolean {
   if (!isDemoSeedEnabled(state.config)) return false;
-  if (!isPlanSparse(state.furnaces, DEMO_MIN_LOADS, DEMO_MIN_CABINETS)) {
+  if (!isPlanSparse(state.furnaces, DEMO_MIN_LOADS, DEMO_MIN_CABINETS, state.virtualLines)) {
     if ((state.planSeedVersion || 0) < PLAN_SEED_VERSION) {
       state.planSeedVersion = PLAN_SEED_VERSION;
       persist();
@@ -933,14 +935,16 @@ function bind(): void {
     render();
   });
   const bindNum = (sel: string, apply: (n: number) => void) => {
-    $(sel).addEventListener('change', (e) => {
+    const handler = (e: Event) => {
       const n = Number((e.target as HTMLInputElement).value);
       if (!Number.isFinite(n) || n < 0) return;
       apply(n);
       persist();
       if (state.fpLoads.length) syncFurnacePlan({ silent: true });
       render();
-    });
+    };
+    $(sel).addEventListener('change', handler);
+    $(sel).addEventListener('input', handler);
   };
   bindNum('#cfgPreheat', (n) => {
     state.config.cycle.preheatDays = n;

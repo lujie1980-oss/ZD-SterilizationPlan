@@ -23,10 +23,16 @@ VITE_ENABLE_DEMO_SEED=false npm run build
 
 1. **日排产工作台**：选日期/白班 → 勾选可排行 → 添加灭菌柜炉次 → 分配到选中炉 → 运行校验。
 2. **建议拼炉**：将未分配 D002 装入柜 9（策略 `D002_CAB9_DEMO`）。
-3. **拆炉向导**：对「需拆炉」行拆 A/B 虚拟载荷；刷新后 `virtualLines[]` 仍在（TC-SPLIT-02）。
+3. **拆炉向导（场景 A / TC-SPLIT-02）**
+   1. 工作台选日期/白班，点「拆炉向导」（演示行 P004 带「需拆炉」）。
+   2. 确认拆为 A/B 并分配到目标柜。
+   3. 工作台应出现炉次载荷 `P004-A` / `P004-B`。
+   4. **硬刷新**（F5）。炉次 `*-A`/`*-B` 仍在；DevTools → Application → Local Storage → `zhende_sterilization_plan_v2` 含 `virtualLines`（`id`/`splitOf`）。
+   5. 有拆炉会话时**不会**被演示稀疏重种清掉炉次。
 4. **进炉计划**：同步装炉结果 → 甘特分段条 → 点柜看顺序队列；视野 7/14/21。
 5. **校验中心 / 主数据**：错误跳转炉次；柜 21、亚澳、EO 通用带琥珀色「待确认」。
 6. **导出**：顶栏「导出日计划 CSV」（进炉页隐藏）；UTF-8 BOM。
+7. **D002 最低体积配置**：工作台「周期/阈值」把 D002 最低 m³ 改为例如 `30`，将体积约 40m³ 的 D002 分到柜 9 再运行校验——`D002_MIN` 应按 **30** 判定（不再锁死种子 56）；改回 `50` 后低于 50 的炉次重新告警。
 
 ## 模块地图
 
@@ -56,7 +62,8 @@ src/
 - Key：`zhende_sterilization_plan_v2`（兼容读取 `…_v1` 且非稀疏时迁移）
 - 字段：`date` / `shift` / `furnaces` / `nextFurnaceSeq` / **`virtualLines: StockLine[]`** / `config` / `planSeedVersion`
 - 拆炉确认时 upsert 虚拟行；load 时 merge 进可排池，保证 `poolById('P004-A')` 可解析
-- 稀疏判定（演示）：可见有载炉次 &lt; 5 或涉及柜数 &lt; 5 → 可重种；**不清除 virtualLines**
+- 稀疏判定（演示）：可见有载炉次 &lt; 5 或涉及柜数 &lt; 5 → 可重种
+- **例外**：存在 `virtualLines[]` 或炉次已挂 `*-A`/`*-B` 时视为拆炉会话，刷新/进炉同步都不得清炉次
 - 种子版本：`planSeedVersion = 2`
 
 ## 配置键（§14）

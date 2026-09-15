@@ -86,7 +86,19 @@ export function planRichness(furnaces: FurnaceRun[]): { loads: number; cabinets:
   return { loads: visible.length, cabinets: cabs.size };
 }
 
-export function isPlanSparse(furnaces: FurnaceRun[], minLoads: number, minCabs: number): boolean {
+/** 拆炉会话：有 virtualLines 或炉次已挂 *-A/*-B 时不得当稀疏计划清掉。 */
+export function hasPersistedSplitWork(furnaces: FurnaceRun[], virtualLines: StockLine[] = []): boolean {
+  if (virtualLines.length > 0) return true;
+  return furnaces.some((f) => f.lines.some((id) => /-(A|B)$/.test(id)));
+}
+
+export function isPlanSparse(
+  furnaces: FurnaceRun[],
+  minLoads: number,
+  minCabs: number,
+  virtualLines: StockLine[] = [],
+): boolean {
+  if (hasPersistedSplitWork(furnaces, virtualLines)) return false;
   const { loads, cabinets } = planRichness(furnaces);
   return loads < minLoads || cabinets < minCabs;
 }

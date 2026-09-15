@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defaultAppConfig } from '../../data/config-defaults';
 import { CABINETS } from '../../data/seed-cabinets';
-import { PROCESSES } from '../../data/seed-processes';
+import { PROCESSES, processMinLoad } from '../../data/seed-processes';
 import type { FurnaceRun, RuleContext, StockLine } from '../entities';
 import { canAddFurnace, validateAll, validateFurnace } from '../rule-engine';
 
@@ -114,6 +114,23 @@ describe('rule-engine', () => {
     const l = line({ id: 'P001', process: 'D002', allowed: ['柜9'], boxes: 100, boxVol: 0.1, vol: 10 });
     const issues = validateFurnace(run({ cabinetId: '柜9', lines: ['P001'] }), ctx([l]));
     expect(issues.some((i) => i.code === 'D002_MIN' && i.sev === 'warning')).toBe(true);
+  });
+
+  it('D002_MIN threshold follows config.load.d002MinM3, overriding Process.minLoadM3 seed 56', () => {
+    const l = line({ id: 'P001', process: 'D002', allowed: ['柜9'], boxes: 400, boxVol: 0.1, vol: 40 });
+    const config = defaultAppConfig();
+    config.load.d002MinM3 = 30;
+    const belowSeedButAboveConfig = validateFurnace(run({ cabinetId: '柜9', lines: ['P001'] }), ctx([l], { config }));
+    expect(belowSeedButAboveConfig.some((i) => i.code === 'D002_MIN')).toBe(false);
+
+    config.load.d002MinM3 = 50;
+    const belowNewConfig = validateFurnace(run({ cabinetId: '柜9', lines: ['P001'] }), ctx([l], { config }));
+    const hit = belowNewConfig.find((i) => i.code === 'D002_MIN');
+    expect(hit?.sev).toBe('warning');
+    expect(hit?.msg).toContain('50');
+    expect(hit?.msg).not.toContain('56m³');
+    expect(processMinLoad('D002', 50, 60, PROCESSES)).toBe(50);
+    expect(processMinLoad('D002', 50, 60, PROCESSES)).not.toBe(56);
   });
 
   it('emits TARGET_MIN with filler copy when allowFiller is off', () => {

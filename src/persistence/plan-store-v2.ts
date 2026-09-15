@@ -10,6 +10,7 @@ import {
 } from '../data/config-defaults';
 import type { AppConfig, FurnaceRun, PlanSnapshot, Shift, StockLine } from '../domain/entities';
 import { isPlanSparse } from '../domain/pool';
+import { ensureSplitFurnaces } from '../domain/split-wizard';
 
 export interface LoadedPlan {
   date: string;
@@ -92,7 +93,7 @@ export function loadPlan(): LoadedPlan {
     if (legacy) {
       fromLegacy = true;
       const legacyData = parseSnapshot(legacy);
-      if (legacyData && !isPlanSparse(legacyData.furnaces || [], DEMO_MIN_LOADS, DEMO_MIN_CABINETS)) {
+      if (legacyData && !isPlanSparse(legacyData.furnaces || [], DEMO_MIN_LOADS, DEMO_MIN_CABINETS, legacyData.virtualLines || [])) {
         raw = legacy;
       }
       removeItem(STORAGE_KEY_LEGACY);
@@ -114,7 +115,13 @@ export function loadPlan(): LoadedPlan {
     sparseWiped: false,
   };
 
-  if (isDemoSeedEnabled(plan.config) && isPlanSparse(plan.furnaces, DEMO_MIN_LOADS, DEMO_MIN_CABINETS)) {
+  if (plan.virtualLines.length) {
+    const restored = ensureSplitFurnaces(plan.furnaces, plan.virtualLines, plan.nextFurnaceSeq);
+    plan.furnaces = restored.furnaces;
+    plan.nextFurnaceSeq = restored.nextSeq;
+  }
+
+  if (isDemoSeedEnabled(plan.config) && isPlanSparse(plan.furnaces, DEMO_MIN_LOADS, DEMO_MIN_CABINETS, plan.virtualLines)) {
     plan.furnaces = [];
     plan.nextFurnaceSeq = 1;
     plan.planSeedVersion = 0;

@@ -116,8 +116,21 @@ export function aerateInfo(
   return { days: 1, pending: true };
 }
 
-export function processMinLoad(processCode: string, d002Min: number, defaultMin: number, processes: Process[] = PROCESSES): number {
+/**
+ * D002 最低拼载：配置 `load.d002MinM3` 覆盖工艺种子 Process.minLoadM3（默认 56）。
+ * 其他工艺：Process.minLoadM3（若有）覆盖 `load.defaultMinM3`。
+ */
+export function processMinLoad(
+  processCode: string,
+  d002Min: number,
+  defaultMin: number,
+  processes: Process[] = PROCESSES,
+): number {
   const hit = processes.find((p) => p.code === processCode);
+  if (processCode === 'D002') {
+    if (Number.isFinite(d002Min)) return d002Min;
+    return hit?.minLoadM3 ?? 56;
+  }
   if (hit?.minLoadM3 != null) return hit.minLoadM3;
-  return processCode === 'D002' ? d002Min : defaultMin;
+  return defaultMin;
 }

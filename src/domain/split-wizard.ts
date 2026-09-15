@@ -1,5 +1,5 @@
 import type { FurnaceRun, Shift, StockLine } from './entities';
-import { needsSplit } from './pool';
+import { assignedIds, needsSplit } from './pool';
 import type { AppConfig } from './entities';
 
 export interface SplitPlan {
@@ -95,4 +95,50 @@ export function applySplit(opts: {
     hidden: true,
   };
   return { rowA, rowB, furnaces: [fA, fB, hidden], nextSeq: seq };
+}
+
+/**
+ * 若 plan 含 virtualLines 但炉次未挂上 *-A/*-B（稀疏重种误清、旧快照），按允许柜补回可见炉次与隐藏父行。
+ */
+export function ensureSplitFurnaces(
+  furnaces: FurnaceRun[],
+  virtualLines: StockLine[],
+  nextSeq: number,
+): { furnaces: FurnaceRun[]; nextSeq: number } {
+  if (!virtualLines.length) return { furnaces, nextSeq };
+  const next = furnaces.slice();
+  let seq = Math.max(nextSeq, 1);
+
+  const bumpSeq = () => {
+    while (next.some((f) => f.id === `F${seq}`)) seq += 1;
+    return seq++;
+  };
+
+  for (const vl of virtualLines) {
+    if (!vl?.id) continue;
+    if (next.some((f) => f.lines.includes(vl.id))) continue;
+    const cabinetId = vl.allowed?.[0] || '柜9';
+    next.push({
+      id: `F${bumpSeq()}`,
+      cabinetId,
+      date: vl.date || '2026-07-24',
+      shift: vl.shift || '白班',
+      lines: [vl.id],
+    });
+  }
+
+  const parents = [...new Set(virtualLines.map((v) => v.splitOf).filter((id): id is string => Boolean(id)))];
+  for (const parentId of parents) {
+    if (assignedIds(next).has(parentId)) continue;
+    const child = virtualLines.find((v) => v.splitOf === parentId);
+    next.push({
+      id: `F${bumpSeq()}`,
+      cabinetId: child?.allowed?.[0] || '柜9',
+      date: child?.date || '2026-07-24',
+      shift: child?.shift || '白班',
+      lines: [parentId],
+      hidden: true,
+    });
+  }
+  return { furnaces: next, nextSeq: seq };
 }
