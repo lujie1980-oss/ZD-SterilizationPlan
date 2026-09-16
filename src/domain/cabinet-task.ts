@@ -1,8 +1,9 @@
-import type { AppConfig, CabinetContent, CabinetTask, FurnaceSchedule, Process, Shift, StockLine, ValidationIssue } from './entities';
+import type { AppConfig, CabinetContent, CabinetTask, FurnaceSchedule, Process, ScheduleSortPolicy, Shift, StockLine, ValidationIssue } from './entities';
 import { cloneContent, isUnscheduled, normalizeCabinetContent } from './cabinet-content';
 import { buildEntryLoads } from './entry-scheduler';
 import type { Cabinet, Tray } from './entities';
 import { addDays, fmtDate } from './dates';
+import { orderContents, resolveScheduleSortPolicy } from './schedule-sort-policy';
 
 export interface GanttScheduleResult {
   ok: boolean;
@@ -28,20 +29,25 @@ function occupiedSlots(contents: CabinetContent[], cabinetId: string): Set<strin
   return s;
 }
 
-export function buildTaskChain(contents: CabinetContent[], cabinetId: string, startSeq: number): {
+export function buildTaskChain(
+  contents: CabinetContent[],
+  cabinetId: string,
+  startSeq: number,
+  opts?: {
+    policy?: ScheduleSortPolicy;
+    poolById?: (id: string) => StockLine | undefined;
+    cabinets?: Cabinet[];
+  },
+): {
   tasks: CabinetTask[];
   contents: CabinetContent[];
   firstTaskId: string | null;
   nextSeq: number;
 } {
-  const list = contents
-    .filter((c) => c.cabinetId === cabinetId && !c.hidden && c.lines.length && c.date && c.shift)
-    .slice()
-    .sort((a, b) => {
-      if (a.date !== b.date) return String(a.date) < String(b.date) ? -1 : 1;
-      if (a.shift !== b.shift) return a.shift === '白班' ? -1 : 1;
-      return String(a.id).localeCompare(String(b.id));
-    });
+  const eligible = contents.filter((c) => c.cabinetId === cabinetId && !c.hidden && c.lines.length && c.date && c.shift);
+  const policy = opts?.policy ?? resolveScheduleSortPolicy(undefined);
+  const poolById = opts?.poolById ?? (() => undefined);
+  const list = orderContents(eligible, policy, { poolById, cabinets: opts?.cabinets });
   const tasks: CabinetTask[] = [];
   let seq = startSeq;
   list.forEach((c, i) => {
@@ -91,20 +97,17 @@ export function applyGanttSchedule(opts: {
   const previous = opts.contents.map(cloneContent);
   let working = opts.contents.map(cloneContent);
   const largeBoxVol = opts.config.box.largeBoxVol;
+  const policy = resolveScheduleSortPolicy(opts.config);
 
   const cabIds = [...new Set(working.filter((c) => !c.hidden && c.lines.length).map((c) => c.cabinetId))];
   for (const cabinetId of cabIds) {
     const slots = occupiedSlots(working, cabinetId);
     let cursor = { date: opts.startDate, shift: '白班' as Shift };
-    const unscheduled = working
-      .filter((c) => c.cabinetId === cabinetId && !c.hidden && c.lines.length && isUnscheduled(c))
-      .slice()
-      .sort((a, b) => {
-        const va = a.lines.reduce((s, id) => s + (opts.poolById(id)?.vol || 0), 0);
-        const vb = b.lines.reduce((s, id) => s + (opts.poolById(id)?.vol || 0), 0);
-        if (vb !== va) return vb - va;
-        return a.id.localeCompare(b.id);
-      });
+    const unscheduled = orderContents(
+      working.filter((c) => c.cabinetId === cabinetId && !c.hidden && c.lines.length && isUnscheduled(c)),
+      policy,
+      { poolById: opts.poolById, cabinets: opts.cabinets },
+    );
     for (const c of unscheduled) {
       while (slots.has(`${cursor.date}|${cursor.shift}`)) {
         cursor = nextShiftDate(cursor.date, cursor.shift);
@@ -135,7 +138,11 @@ export function applyGanttSchedule(opts: {
   const schedules: FurnaceSchedule[] = [];
   let nextSeq = opts.nextTaskSeq || 1;
   for (const cabinetId of cabIds) {
-    const built = buildTaskChain(working, cabinetId, nextSeq);
+    const built = buildTaskChain(working, cabinetId, nextSeq, {
+      policy,
+      poolById: opts.poolById,
+      cabinets: opts.cabinets,
+    });
     working = built.contents;
     allTasks = allTasks.concat(built.tasks);
     schedules.push({ cabinetId, firstTaskId: built.firstTaskId });

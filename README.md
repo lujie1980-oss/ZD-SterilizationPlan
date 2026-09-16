@@ -38,7 +38,7 @@ VITE_ENABLE_DEMO_SEED=false npm run build
    3. 工作台应出现炉次载荷 `P004-A` / `P004-B`。
    4. **硬刷新**（F5）。炉次 `*-A`/`*-B` 仍在；DevTools → Application → Local Storage → `zhende_sterilization_plan_v2` 含 `virtualLines`（`id`/`splitOf`）。
    5. 有拆炉会话时**不会**被演示稀疏重种清掉炉次。
-5. **进炉计划**：同步装炉结果 → **才创建 CabinetTask 链**（prev/next/FirstTask/IsFirst）并写回 date/shift/seq → 甘特分段条。交期 `due` 不变。
+5. **进炉计划**：同步装炉结果 → **才创建 CabinetTask 链**（prev/next/FirstTask/IsFirst）并写回 date/shift/seq → 甘特分段条。交期 `due` 不变。**排序策略**面板可调核心键（上线日期 / 班次 / 体积）的序与升降，并可启用交期 / 加急 / 装柜率；保存只写 `config.scheduleSortPolicy`，**下次「同步装炉结果」才重排该柜链**。恢复默认 = `date↑ → shift↑ → volume↓ → id↑`。未排 Content 靠后。铁律不可配：按柜建链 · 不改交期 · 组柜不建 Task。
 6. **校验中心 / 主数据**：错误跳转炉次；柜 21、亚澳、EO 通用带琥珀色「待确认」。灭菌柜页展示额定装载 `ratedLoadM3` 与托盘层数。
 7. **导出**：顶栏「导出日计划 CSV」（进炉页/组柜页隐藏）；UTF-8 BOM；**未排载荷默认不含**。
 8. **D002 最低拼载（v1.2）**：过渡页「D002 最低拼载 (m³)」改为 `30` 后立刻影响校验与建议拼炉目标。约 40m³ 的 D002 分到柜 9 → `D002_MIN` 按 **30** 判定；改回 `50` 后低于 50 再告警。正式字段 `config.minLoadM3ByProcess.D002`，旧字段 `d002MinLoadM3` 读入迁移。
@@ -62,6 +62,7 @@ src/
     export-csv.ts        # 日计划 CSV
     grouping.ts          # 双入口完整可进列表 / 自动组柜 / 装填完毕
     pack-suggest-policy.ts # 变更-3 组柜建议策略（校验 / 打分 / 预设）
+    schedule-sort-policy.ts # 变更-2 甘特入炉排序策略（校验 / 生效键 / 比较器）
     cabinet-content.ts   # CabinetContent + TraysInCabinetContent + StockLinesOnTray
     cabinet-task.ts      # 甘特才建 Task 链并写回 date/shift
     cabinet-runtime.ts   # 柜运行态（与主数据分离）
@@ -83,7 +84,7 @@ src/
 ## 持久化（plan v2）
 
 - Key：`zhende_sterilization_plan_v2`（兼容读取 `…_v1` 且非稀疏时迁移）
-- 字段：`date` / `shift` / `furnaces`（= `contents` 双写，含可选 `manualViolation`） / `contents` / `tasks` / `runtimes` / `schedules` / `nextFurnaceSeq` / **`virtualLines: StockLine[]`** / `config`（含 **`scheduleMode`**、可选 **`overrideNotes`**、**`packSuggestPolicy`**） / `planSeedVersion`
+- 字段：`date` / `shift` / `furnaces`（= `contents` 双写，含可选 `manualViolation`） / `contents` / `tasks` / `runtimes` / `schedules` / `nextFurnaceSeq` / **`virtualLines: StockLine[]`** / `config`（含 **`scheduleMode`**、可选 **`overrideNotes`**、**`packSuggestPolicy`**、**`scheduleSortPolicy`**） / `planSeedVersion`
 - 组柜结构：`CabinetContent` → `TraysInCabinetContent`（必填 `trayId`）→ `StockLinesOnTray`；旧 `FurnaceRun`/`Layer`/`OnLayer` 仅为类型别名
 - 组柜阶段 `date`/`shift`/`taskId` 为 null；进炉同步写回并建 `CabinetTask` 链（prev/next/FirstTask/IsFirst）
 - 旧快照缺 `scheduleMode` 时缺省为 **`auto`**；切换模式不清除炉次
@@ -121,6 +122,7 @@ src/
 | `fillRateDenom` | `ratedLoadM3` | 装柜率分母（不用日产能） |
 | `grouping.skipInOtherCabinet` | true | 自动组柜跳过已进其他柜 |
 | `config.packSuggestPolicy` | 填满优先 80%，交期簇关 | 变更-3：组柜自动建议。`fillMode`=`fillOneFirst`\|`balanceAcrossCabinets`；`targetFillRate` 0.70～0.95；`dueWindowDays` 1～14；`dimensions` 序=优先级（`gapMin` / `targetFill` / `dueCluster`）。缺省或旧 plan 无字段视为默认。非法配置拒存（`PACK_POLICY_*`）。保存后**下次自动组柜**生效 |
+| `config.scheduleSortPolicy` | date↑ → shift↑ → volume↓ → id↑ | 变更-2：甘特同步建链排序。核心键 date/shift/volume 恒开，可调序/升降；可选 due/urgent/fillRate 默认关。系统强制末键 `id` asc。`applyMode`=`nextSyncOnly`（只保存不重排已有链）。`nullDatePolicy`=`treatAsLatest`（未排靠后）。非法拒存（`SORT_POLICY_*`）。缺省或旧 plan 无字段视为默认 |
 | `storage.key` | `zhende_sterilization_plan_v2` | |
 
 解析天数在工艺主数据（D002=2 已确认；P006/P252/亚澳/EO通用 pending）。
@@ -131,7 +133,7 @@ src/
 **软**：`D002_MIN`、`TARGET_MIN`、`MIX_CUSTOMER`、`OVER_CAP`、`OCCUPANCY`、`STERILIZE_OVERLAP`、`PREHEAT_OVERLAP`  
 **信息**：`CAB21`、`PROC_PENDING`
 
-进炉排序：日期升序 → 白班先于夜班 → 体积降序 → furnaceId 字典序；`seq` 1…n。
+进炉排序：由 `config.scheduleSortPolicy` 生效键比较（默认日期升序 → 白班先于夜班 → 体积降序 → furnaceId 字典序）；系统末键 `id`；`seq` 1…n 仍按柜。
 
 **提交闸门（二期 A）**：复用上表 RuleEngine 结果。`scheduleMode=auto` 或 `editSource=auto`（建议拼炉）时任一 `error` 禁止写入 `lines` / `virtualLines`；`scheduleMode=manual` 且人工操作允许写入并置 `FurnaceRun.manualViolation`。不改变 BOX_LIMIT 口径 2、D002 最低拼载、virtualLines 语义。
 

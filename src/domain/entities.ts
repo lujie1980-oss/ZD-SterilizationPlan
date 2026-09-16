@@ -19,6 +19,10 @@ export type FillMode = 'fillOneFirst' | 'balanceAcrossCabinets';
 export type PackDimensionCode = 'gapMin' | 'targetFill' | 'dueCluster';
 export type PackSuggestPreset = 'fillFirst' | 'dueCluster' | 'balanced' | 'custom';
 export type PackSuggestApplyMode = 'nextAutoPackOnly';
+export type SortKeyCode = 'date' | 'shift' | 'volume' | 'id' | 'due' | 'urgent' | 'fillRate';
+export type SortDirection = 'asc' | 'desc';
+export type NullDatePolicy = 'treatAsLatest';
+export type ScheduleSortApplyMode = 'nextSyncOnly';
 
 export interface PackDimensionSpec {
   code: PackDimensionCode;
@@ -35,6 +39,23 @@ export interface PackSuggestPolicy {
   dueWindowDays: number;
   dimensions: PackDimensionSpec[];
   applyMode: PackSuggestApplyMode;
+  updatedAt: string;
+}
+
+export interface SortKeySpec {
+  code: SortKeyCode;
+  direction: SortDirection;
+  /** 可选键用；真源 date/shift/volume 恒 true */
+  enabled: boolean;
+}
+
+export interface ScheduleSortPolicy {
+  id: string;
+  name: string;
+  version: number;
+  keys: SortKeySpec[];
+  nullDatePolicy: NullDatePolicy;
+  applyMode: ScheduleSortApplyMode;
   updatedAt: string;
 }
 
@@ -351,6 +372,8 @@ export interface AppConfig {
   };
   /** 变更-3：组柜自动建议策略；缺省视为填满优先默认 */
   packSuggestPolicy: PackSuggestPolicy;
+  /** 变更-2：甘特同步建链排序；缺省视为现行四键真源 */
+  scheduleSortPolicy: ScheduleSortPolicy;
 }
 
 export type LegacyConfigInput = Partial<AppConfig> & {
@@ -399,6 +422,16 @@ export const PACK_POLICY_ERROR_CODES = {
 } as const;
 
 export type PackPolicyErrorCode = (typeof PACK_POLICY_ERROR_CODES)[keyof typeof PACK_POLICY_ERROR_CODES];
+
+export const SORT_POLICY_ERROR_CODES = {
+  SORT_POLICY_EMPTY: 'SORT_POLICY_EMPTY',
+  SORT_POLICY_UNKNOWN_KEY: 'SORT_POLICY_UNKNOWN_KEY',
+  SORT_POLICY_DUP_KEY: 'SORT_POLICY_DUP_KEY',
+  SORT_POLICY_CORE_DISABLED: 'SORT_POLICY_CORE_DISABLED',
+  SORT_POLICY_BAD_DIR: 'SORT_POLICY_BAD_DIR',
+} as const;
+
+export type SortPolicyErrorCode = (typeof SORT_POLICY_ERROR_CODES)[keyof typeof SORT_POLICY_ERROR_CODES];
 
 export const ISSUE_CODES = {
   CABINET_SCRAPPED: 'CABINET_SCRAPPED',

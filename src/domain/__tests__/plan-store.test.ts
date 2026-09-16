@@ -397,6 +397,68 @@ describe('plan-store-v2', () => {
     expect(loaded.config.packSuggestPolicy.dimensions.find((d) => d.code === 'dueCluster')?.enabled).toBe(false);
     expect(loaded.furnaces[0]?.lines).toEqual(['P001']);
   });
+
+  it('C2-10: scheduleSortPolicy 写入 plan v2 后刷新可恢复', () => {
+    const cfg = defaultAppConfig();
+    cfg.demo.enableSeed = false;
+    cfg.scheduleSortPolicy = {
+      ...cfg.scheduleSortPolicy,
+      id: 'custom',
+      name: '自定义',
+      keys: [
+        { code: 'volume', direction: 'asc', enabled: true },
+        { code: 'date', direction: 'asc', enabled: true },
+        { code: 'shift', direction: 'asc', enabled: true },
+        { code: 'due', direction: 'asc', enabled: true },
+        { code: 'urgent', direction: 'desc', enabled: false },
+        { code: 'fillRate', direction: 'desc', enabled: false },
+      ],
+    };
+    savePlan({
+      date: '2026-07-24',
+      shift: '白班',
+      furnaces: [{ id: 'F1', cabinetId: '柜9', date: null, shift: null, lines: ['P001'] }],
+      nextFurnaceSeq: 2,
+      virtualLines: [],
+      config: cfg,
+      planSeedVersion: 2,
+      sparseWiped: false,
+    });
+    const loaded = loadPlan();
+    expect(loaded.config.scheduleSortPolicy.keys[0]?.code).toBe('volume');
+    expect(loaded.config.scheduleSortPolicy.keys[0]?.direction).toBe('asc');
+    expect(loaded.config.scheduleSortPolicy.keys.find((k) => k.code === 'due')?.enabled).toBe(true);
+    expect(loaded.config.scheduleSortPolicy.applyMode).toBe('nextSyncOnly');
+    expect(loaded.config.packSuggestPolicy.preset).toBe('fillFirst');
+    expect(loaded.furnaces[0]?.lines).toEqual(['P001']);
+  });
+
+  it('C2-10b: 旧 plan 无 scheduleSortPolicy 视为默认四键，不破坏 packSuggestPolicy', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        date: '2026-07-24',
+        shift: '白班',
+        furnaces: [{ id: 'F1', cabinetId: '柜9', date: null, shift: null, lines: ['P001'] }],
+        nextFurnaceSeq: 2,
+        virtualLines: [],
+        config: { d002MinLoadM3: 56, demo: { enableSeed: false } },
+        planSeedVersion: 2,
+      }),
+    );
+    const loaded = loadPlan();
+    expect(loaded.config.scheduleSortPolicy.id).toBe('default');
+    expect(loaded.config.scheduleSortPolicy.keys.map((k) => `${k.code}:${k.direction}:${k.enabled}`)).toEqual([
+      'date:asc:true',
+      'shift:asc:true',
+      'volume:desc:true',
+      'due:asc:false',
+      'urgent:desc:false',
+      'fillRate:desc:false',
+    ]);
+    expect(loaded.config.packSuggestPolicy.preset).toBe('fillFirst');
+    expect(loaded.furnaces[0]?.lines).toEqual(['P001']);
+  });
 });
 
 describe('eligibility', () => {
