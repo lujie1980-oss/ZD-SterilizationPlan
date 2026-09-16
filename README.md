@@ -24,9 +24,11 @@ VITE_ENABLE_DEMO_SEED=false npm run build
 1. **组柜（变更-1 主路径）**
    1. 侧栏「组柜」默认进入。入口 **选柜 / 选需求**，无上线日期筛选、无白夜班切换。
    2. **选柜**：点柜 9 → 完整可进列表分栏「已进本柜 / 还可排入 / 已进其他柜」；灭菌中柜（演示柜14）灰显禁用但仍可见。
-   3. 点「自动组柜」：可见分层（托盘主数据）→ 装柜；柜卡「未排」，`date/shift=null`，**不建 CabinetTask**。
-   4. **选需求**：单击行只查看可组柜列表（不勾选）；勾选框才进入多选批量。
-   5. 自动模式 error 不落盘；手工调整可违例。FactStrip / 自动|手工闸门（二期 A）仍在。
+  3. 点「自动组柜」：可见分层（托盘主数据）→ 装柜；柜卡「未排」，`date/shift=null`，**不建 CabinetTask**。层体积超过 `Tray.capacityM3` 时分层卡片显示红色「超托盘」（C1-28）；装柜率分母仍为柜 `ratedLoadM3`。
+  4. **选需求**：单击行只查看可组柜列表（不勾选）；勾选框才进入多选批量。
+  5. 自动模式 error 不落盘；手工调整可违例。FactStrip / 自动|手工闸门（二期 A）仍在。
+  6. **C1-31 装填完毕**：点「装填完毕」后柜为待入炉（不当空闲）。自动排产再拼 **拒绝落盘**；切「手工调整」可再拼，组柜红条 + 校验中心 `LOAD_COMPLETE_BLOCK`。
+  7. **C1-40 OnTray 分量**：写入箱数/体积不得超过该 StockLine 剩余可排量（已占用 OnTray 之和）；超量 `QTY_EXCEEDED` 拒绝自动落盘。
 2. **已排期浏览（过渡）**：原日排产工作台。顶部日期只过滤**已排期**结果，不作为组柜前置。
 3. **建议拼炉**：将未分配 D002 装入柜 9（策略 `D002_CAB9_DEMO`），结果为未排。
 4. **拆炉向导（场景 A / TC-SPLIT-02）**
@@ -122,8 +124,8 @@ src/
 
 ## 校验码
 
-**硬**：`CABINET_SCRAPPED`（报废不可添加炉次）、`CABINET_MISMATCH`、`BOX_LIMIT`（v1.3：仅大箱合计 &gt; `maxBoxesWhenLarge`；大箱+小箱混炉总箱 500–700 但大箱 ≤280 通过）  
-**软**：`D002_MIN`、`TARGET_MIN`、`MIX_CUSTOMER`、`OVER_CAP`、`OCCUPANCY`、`STERILIZE_OVERLAP`、`PREHEAT_OVERLAP`  
+**硬**：`CABINET_SCRAPPED`（报废不可添加炉次）、`CABINET_MISMATCH`、`BOX_LIMIT`（v1.3：仅大箱合计 &gt; `maxBoxesWhenLarge`；大箱+小箱混炉总箱 500–700 但大箱 ≤280 通过）、`LOAD_COMPLETE_BLOCK`（装填完毕待入炉：自动禁再拼；手工再拼须强预警）、`QTY_EXCEEDED`（OnTray 箱/体积分量超过 StockLine 剩余可排量）  
+**软**：`D002_MIN`、`TARGET_MIN`、`MIX_CUSTOMER`、`OVER_CAP`、`OCCUPANCY`、`STERILIZE_OVERLAP`、`PREHEAT_OVERLAP`、`TRAY_OVER`（层体积 &gt; `Tray.capacityM3`，分层示意「超托盘」）  
 **信息**：`CAB21`、`PROC_PENDING`
 
 进炉排序：日期升序 → 白班先于夜班 → 体积降序 → furnaceId 字典序；`seq` 1…n。

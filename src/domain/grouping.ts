@@ -181,7 +181,10 @@ export function autoPackCabinet(opts: {
       ],
     };
   }
-  if (runtime?.status === 'loadComplete') {
+  const existingComplete = opts.contents.find(
+    (c) => c.cabinetId === opts.cabinetId && !c.hidden && c.loadComplete,
+  );
+  if (runtime?.status === 'loadComplete' || existingComplete) {
     return {
       ok: false,
       message: `${opts.cabinetId} 装填完毕待入炉，自动禁再拼`,
@@ -234,6 +237,9 @@ export function autoPackCabinet(opts: {
     poolById: opts.poolById,
     config: opts.config,
     sameShiftFurnaces: opts.contents,
+    trayMaster: opts.trayMaster,
+    allContents: opts.contents,
+    runtimes: opts.runtimes,
   };
 
   for (const line of fresh) {

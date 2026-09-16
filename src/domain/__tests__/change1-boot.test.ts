@@ -30,6 +30,8 @@ describe('变更-1 组柜页面冒烟 (jsdom)', () => {
     expect(document.querySelector('[data-placement="inThisCabinet"]')).toBeTruthy();
     expect(document.querySelector('[data-placement="unassigned"]') || document.body.textContent).toBeTruthy();
     expect(document.body.textContent).toMatch(/未排/);
+    expect(document.body.textContent).toContain('超托盘');
+    expect(document.querySelector('[data-tray-over]')).toBeTruthy();
 
     const cab14 = document.querySelector('[data-grp-cab="柜14"]') as HTMLElement;
     expect(cab14.classList.contains('disabled') || cab14.textContent?.includes('灭菌中')).toBe(true);

@@ -55,6 +55,7 @@ function buildTrays(cabinets: Cabinet[]): Tray[] {
         cabinetId: cab.id,
         level: i,
         displayName: `第${i}层托盘`,
+        capacityM3: +(cab.ratedLoadM3 / n).toFixed(2),
         ratedLoadM3: +(cab.ratedLoadM3 / n).toFixed(2),
         status: '可用',
       });

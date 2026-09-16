@@ -4,15 +4,23 @@ import { CABINETS, TRAYS, traysForCabinet } from '../../data/seed-cabinets';
 import { createSeedPool } from '../../data/seed-pool';
 import { PROCESSES } from '../../data/seed-processes';
 import { applyGanttSchedule } from '../cabinet-task';
-import { fillRateOf, findPlacement, normalizeCabinetContent } from '../cabinet-content';
+import {
+  fillRateOf,
+  findPlacement,
+  normalizeCabinetContent,
+  occupiedBoxesOf,
+  remainingBoxes,
+  trayCapacityM3,
+} from '../cabinet-content';
 import { demoRuntimeOverrides, deriveAllRuntimes } from '../cabinet-runtime';
-import type { CabinetContent } from '../entities';
+import type { CabinetContent, RuleContext } from '../entities';
 import {
   autoPackCabinet,
   focusDemand,
   listCandidateCabinets,
   listEligibleForCabinet,
   markLoadComplete,
+  manualPackCabinet,
   replaceCabinetActive,
   toggleDemandCheck,
 } from '../grouping';
@@ -40,6 +48,66 @@ function content(partial: Partial<CabinetContent> & Pick<CabinetContent, 'id' | 
       poolById,
       largeBoxVol: cfg.box.largeBoxVol,
       cabinet: CABINETS.find((c) => c.id === partial.cabinetId),
+    },
+  );
+}
+
+function groupingCtx(contents: CabinetContent[]): RuleContext {
+  return {
+    cabinets: CABINETS,
+    processes: PROCESSES,
+    poolById,
+    config: cfg,
+    sameShiftFurnaces: contents,
+    trayMaster: TRAYS,
+    allContents: contents,
+    runtimes: deriveAllRuntimes(CABINETS, contents, []),
+  };
+}
+
+function onTrayShare(opts: {
+  id: string;
+  cabinetId: string;
+  stockLineId: string;
+  boxes: number;
+  vol: number;
+  loadComplete?: boolean;
+}): CabinetContent {
+  const tray = traysForCabinet(opts.cabinetId)[0]!;
+  return normalizeCabinetContent(
+    {
+      id: opts.id,
+      cabinetId: opts.cabinetId,
+      date: null,
+      shift: null,
+      lines: [opts.stockLineId],
+      loadComplete: opts.loadComplete,
+      trays: [
+        {
+          id: `${opts.id}::${tray.id}`,
+          contentId: opts.id,
+          trayId: tray.id,
+          level: tray.level,
+          vol: 0,
+          boxes: 0,
+          largeBoxes: 0,
+          onTray: [
+            {
+              id: `${opts.id}::${tray.id}::${opts.stockLineId}`,
+              trayInContentId: `${opts.id}::${tray.id}`,
+              stockLineId: opts.stockLineId,
+              boxes: opts.boxes,
+              vol: opts.vol,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      trayMaster: TRAYS,
+      poolById,
+      largeBoxVol: cfg.box.largeBoxVol,
+      cabinet: CABINETS.find((c) => c.id === opts.cabinetId),
     },
   );
 }
@@ -375,5 +443,171 @@ describe('变更-1 入口 B 多行柜交集 / 报废不可选', () => {
     const ids = rows.map((r) => r.cabinetId).sort();
     expect(ids).toEqual(['柜20', '柜9']);
     expect(ids).not.toContain('柜1');
+  });
+});
+
+describe('C1-28 超托盘（Tray.capacityM3）', () => {
+  it('Tray 主数据有 capacityM3；装柜率分母仍为柜 ratedLoadM3', () => {
+    const tray = traysForCabinet('柜9')[0]!;
+    expect(tray.capacityM3).toBeGreaterThan(0);
+    expect(trayCapacityM3(tray)).toBe(tray.capacityM3);
+    const c = content({ id: 'CC1', cabinetId: '柜9', lines: ['P001'] });
+    const cab = CABINETS.find((x) => x.id === '柜9')!;
+    expect(c.fillRate).toBeCloseTo(poolById('P001')!.vol / cab.ratedLoadM3);
+  });
+
+  it('托盘已装体积超过 capacityM3 时发出 TRAY_OVER 警告（非硬错误）', () => {
+    const c = content({ id: 'CC1', cabinetId: '柜9', lines: ['P001'] });
+    const tray = traysForCabinet('柜9')[0]!;
+    expect(c.trays![0]!.vol).toBeGreaterThan(trayCapacityM3(tray));
+    const issues = validateFurnace(c, groupingCtx([c]));
+    expect(issues.some((i) => i.code === 'TRAY_OVER' && i.sev === 'warning' && i.msg.includes('超托盘'))).toBe(true);
+    expect(issues.some((i) => i.code === 'TRAY_OVER' && i.sev === 'error')).toBe(false);
+  });
+
+  it('未超托盘容积不发 TRAY_OVER', () => {
+    const c = content({ id: 'CC1', cabinetId: '柜9', lines: ['P003'] });
+    const cap = trayCapacityM3(traysForCabinet('柜9')[0]!);
+    expect(c.trays![0]!.vol).toBeLessThanOrEqual(cap);
+    const issues = validateFurnace(c, groupingCtx([c]));
+    expect(issues.some((i) => i.code === 'TRAY_OVER')).toBe(false);
+  });
+});
+
+describe('C1-31 装填完毕后再拼', () => {
+  it('loadComplete 不当空闲：可选查看、自动禁再拼、不标 idle', () => {
+    const loaded = content({ id: 'CC1', cabinetId: '柜9', lines: ['P001'], loadComplete: true });
+    const runtimes = deriveAllRuntimes(CABINETS, [loaded], []);
+    expect(runtimes.find((r) => r.cabinetId === '柜9')?.status).toBe('loadComplete');
+    expect(runtimes.find((r) => r.cabinetId === '柜9')?.status).not.toBe('idle');
+    const rows = listCandidateCabinets({
+      lineIds: ['P002'],
+      poolById,
+      cabinets: CABINETS,
+      runtimes,
+    });
+    const cab9 = rows.find((r) => r.cabinetId === '柜9')!;
+    expect(cab9.selectable).toBe(true);
+    expect(cab9.autoPackBlocked).toBe(true);
+    expect(cab9.disabledReason).toMatch(/待入炉|不当空闲/);
+  });
+
+  it('auto：装填完毕拒绝再拼落盘', () => {
+    const loaded = content({ id: 'CC1', cabinetId: '柜9', lines: ['P001'], loadComplete: true });
+    const runtimes = deriveAllRuntimes(CABINETS, [loaded], []);
+    const packed = autoPackCabinet({
+      cabinetId: '柜9',
+      pool,
+      contents: [loaded],
+      cabinets: CABINETS,
+      processes: PROCESSES,
+      trayMaster: TRAYS,
+      runtimes,
+      config: cfg,
+      nextId: 'CC-X',
+      poolById,
+    });
+    expect(packed.ok).toBe(false);
+    expect(packed.issues.some((i) => i.code === 'LOAD_COMPLETE_BLOCK' && i.sev === 'error')).toBe(true);
+
+    const attempted = content({ id: 'CC1', cabinetId: '柜9', lines: ['P001', 'P002'], loadComplete: true });
+    const decision = decideCommit({
+      previous: [loaded],
+      next: [attempted],
+      config: cfg,
+      ctx: groupingCtx([attempted]),
+      editSource: 'auto',
+    });
+    expect(decision.aborted).toBe(true);
+    expect(decision.persisted[0]!.lines).toEqual(['P001']);
+  });
+
+  it('manual：允许再拼但 LOAD_COMPLETE_BLOCK 强预警并标手工违例', () => {
+    const loaded = content({ id: 'CC1', cabinetId: '柜9', lines: ['P001'], loadComplete: true });
+    const runtimes = deriveAllRuntimes(CABINETS, [loaded], []);
+    const packed = manualPackCabinet({
+      cabinetId: '柜9',
+      lineIds: ['P002'],
+      contents: [loaded],
+      cabinets: CABINETS,
+      trayMaster: TRAYS,
+      runtimes,
+      config: { ...cfg, scheduleMode: 'manual' },
+      nextId: 'CC-X',
+      poolById,
+      allowInOther: false,
+    });
+    expect(packed.ok).toBe(true);
+    expect(packed.content!.loadComplete).toBe(true);
+    expect(packed.content!.lines).toEqual(expect.arrayContaining(['P001', 'P002']));
+    const next = replaceCabinetActive([loaded], packed.content!).contents;
+    const decision = decideCommit({
+      previous: [loaded],
+      next,
+      config: { ...cfg, scheduleMode: 'manual' },
+      ctx: groupingCtx(next),
+      editSource: 'manual',
+    });
+    expect(decision.aborted).toBe(false);
+    expect(decision.issues.some((i) => i.code === 'LOAD_COMPLETE_BLOCK' && i.sev === 'error')).toBe(true);
+    expect(decision.persisted.find((c) => c.id === packed.content!.id)?.manualViolation).toBe(true);
+    expect(decision.needsOverridePrompt).toBe(true);
+  });
+});
+
+describe('C1-40 OnTray 分量不得超过 StockLine 剩余可排量', () => {
+  it('occupied / remaining 按 OnTray 分量合计，扁平行视为整行占用', () => {
+    const p001 = poolById('P001')!;
+    const share = onTrayShare({ id: 'CC1', cabinetId: '柜9', stockLineId: 'P001', boxes: 200, vol: 20 });
+    expect(occupiedBoxesOf(p001, [share])).toBe(200);
+    expect(remainingBoxes(p001, [share])).toBe(p001.boxes - 200);
+    const flat: CabinetContent = { id: 'CC0', cabinetId: '柜20', date: null, shift: null, lines: ['P001'] };
+    expect(occupiedBoxesOf(p001, [flat])).toBe(p001.boxes);
+    expect(remainingBoxes(p001, [flat])).toBe(0);
+  });
+
+  it('单柜 OnTray 箱数/体积超过本行总量 → QTY_EXCEEDED error', () => {
+    const p001 = poolById('P001')!;
+    const over = onTrayShare({
+      id: 'CC1',
+      cabinetId: '柜9',
+      stockLineId: 'P001',
+      boxes: p001.boxes + 50,
+      vol: p001.vol + 5,
+    });
+    const issues = validateFurnace(over, groupingCtx([over]));
+    expect(issues.some((i) => i.code === 'QTY_EXCEEDED' && i.sev === 'error' && i.lineId === 'P001')).toBe(true);
+  });
+
+  it('跨柜已占用后剩余不足 → QTY_EXCEEDED；未超量不报', () => {
+    const p001 = poolById('P001')!;
+    const other = onTrayShare({ id: 'CC2', cabinetId: '柜20', stockLineId: 'P001', boxes: 200, vol: 20 });
+    const extra = onTrayShare({ id: 'CC1', cabinetId: '柜9', stockLineId: 'P001', boxes: 100, vol: 10 });
+    expect(remainingBoxes(p001, [other])).toBe(p001.boxes - 200);
+    expect(validateFurnace(extra, groupingCtx([other, extra])).some((i) => i.code === 'QTY_EXCEEDED')).toBe(true);
+    const ok = onTrayShare({ id: 'CC1', cabinetId: '柜9', stockLineId: 'P001', boxes: 80, vol: 8 });
+    expect(validateFurnace(ok, groupingCtx([other, ok])).some((i) => i.code === 'QTY_EXCEEDED')).toBe(false);
+  });
+
+  it('auto 闸门对 QTY_EXCEEDED 拒绝落盘', () => {
+    const p001 = poolById('P001')!;
+    const empty = content({ id: 'CC1', cabinetId: '柜9', lines: [] });
+    const over = onTrayShare({
+      id: 'CC1',
+      cabinetId: '柜9',
+      stockLineId: 'P001',
+      boxes: p001.boxes + 10,
+      vol: p001.vol + 1,
+    });
+    const decision = decideCommit({
+      previous: [empty],
+      next: [over],
+      config: cfg,
+      ctx: groupingCtx([over]),
+      editSource: 'auto',
+    });
+    expect(decision.aborted).toBe(true);
+    expect(decision.issues.some((i) => i.code === 'QTY_EXCEEDED')).toBe(true);
+    expect(decision.persisted[0]!.lines).toEqual([]);
   });
 });

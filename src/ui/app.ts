@@ -10,8 +10,8 @@ import { CABINETS, TRAYS, cabinetById, traysForCabinet, usableCabinets } from '.
 import { getDemoFurnaceSeed } from '../data/seed-demo-plan';
 import { createSeedPool } from '../data/seed-pool';
 import { PROCESSES } from '../data/seed-processes';
-import { normalizeCabinetContent } from '../domain/cabinet-content';
-import { demoRuntimeOverrides, deriveAllRuntimes, runtimeLabel } from '../domain/cabinet-runtime';
+import { normalizeCabinetContent, trayCapacityM3 } from '../domain/cabinet-content';
+import { demoRuntimeOverrides, deriveAllRuntimes } from '../domain/cabinet-runtime';
 import { applyGanttSchedule } from '../domain/cabinet-task';
 import { addDays, dayOffset, fmtDate, fmtDateTime } from '../domain/dates';
 import type {
@@ -58,6 +58,7 @@ import {
   isPlanSparse,
   mergeVirtualLinesIntoPool,
   needsSplit,
+  unscheduledContents,
   upsertVirtualLine,
   visibleUnassignedPool,
 } from '../domain/pool';
@@ -65,7 +66,13 @@ import { canAddFurnace, validateAll, validateFurnace } from '../domain/rule-engi
 import { applySplit, findSplitTarget } from '../domain/split-wizard';
 import { loadPlan, savePlan, type LoadedPlan } from '../persistence/plan-store-v2';
 import { $, $$, $opt, escapeHtml, toast } from './dom';
-import { groupingToolbarContractHtml, placementChip } from './grouping-view';
+import {
+  groupingLoadCompleteBannerHtml,
+  groupingRuntimeTagsHtml,
+  groupingToolbarContractHtml,
+  placementChip,
+  trayOverChip,
+} from './grouping-view';
 
 type Page = 'grouping' | 'workbench' | 'furnace-plan' | 'pool' | 'cabinets' | 'processes' | 'boxspecs' | 'validation';
 
@@ -141,6 +148,9 @@ function ruleCtx(sameShift = currentFurnaces(state.furnaces, state.date, state.s
     poolById: lookup,
     config: state.config,
     sameShiftFurnaces: sameShift,
+    trayMaster: TRAYS,
+    allContents: sameShift,
+    runtimes: deriveAllRuntimes(CABINETS, sameShift, demoRuntimeOverrides()),
   };
 }
 
@@ -279,10 +289,16 @@ function syncFurnacePlan(opts?: { silent?: boolean }): void {
   }
 }
 
+const GROUPING_ISSUE_CODES = new Set(['LOAD_COMPLETE_BLOCK', 'QTY_EXCEEDED', 'TRAY_OVER']);
+
 function collectIssues(): ValidationIssue[] {
-  const furns = currentFurnaces(state.furnaces, state.date, state.shift);
-  const furnaceIssues = collectFurnaceIssues(furns, ruleCtx(furns), scheduleMode());
-  return [...furnaceIssues, ...state.fpConflicts];
+  const scheduled = currentFurnaces(state.furnaces, state.date, state.shift);
+  const unsched = unscheduledContents(state.furnaces);
+  const scheduledIssues = collectFurnaceIssues(scheduled, ruleCtx(scheduled), scheduleMode());
+  const groupingIssues = collectFurnaceIssues(unsched, ruleCtx(unsched), scheduleMode()).filter((i) =>
+    GROUPING_ISSUE_CODES.has(i.code),
+  );
+  return [...scheduledIssues, ...groupingIssues, ...state.fpConflicts];
 }
 
 function factStripHtml(line: StockLine): string {
@@ -736,9 +752,12 @@ function renderLayerStack(cabinetId: string | null): string {
     .map((t) => {
       const md = trays.find((x) => x.id === t.trayId);
       const names = (t.onTray || []).map((o) => o.stockLineId).join('、') || '空层';
-      return `<div class="grp-layer">
-        <div class="grp-layer-hd">${escapeHtml(md?.displayName || `第${t.level}层`)} · <span class="mono">${escapeHtml(t.trayId)}</span></div>
-        <div class="grp-layer-bd">${escapeHtml(names)} · ${t.vol.toFixed(1)} m³ · ${t.boxes}箱</div>
+      const cap = trayCapacityM3(md);
+      const overChip = trayOverChip(t.vol, cap);
+      const overCls = overChip ? ' tray-over' : '';
+      return `<div class="grp-layer${overCls}"${overChip ? ' data-tray-over="layer"' : ''}>
+        <div class="grp-layer-hd">${escapeHtml(md?.displayName || `第${t.level}层`)} · <span class="mono">${escapeHtml(t.trayId)}</span> ${overChip}</div>
+        <div class="grp-layer-bd">${escapeHtml(names)} · ${t.vol.toFixed(1)} m³ / 容积 ${cap || '—'} m³ · ${t.boxes}箱</div>
       </div>`;
     })
     .join('');
@@ -934,12 +953,38 @@ function runMarkLoadComplete(): void {
   toast(marked.message, marked.content.manualViolation ? 'warn' : 'success');
 }
 
+function renderGroupingModeBanner(): void {
+  const el = $opt('#grpModeBanner');
+  if (!el) return;
+  const cabId = state.grpSelectedCabinetId;
+  const rt = cabId ? currentRuntimes().find((r) => r.cabinetId === cabId) : undefined;
+  if (rt?.status === 'loadComplete') {
+    el.className = scheduleMode() === 'manual' ? 'strong-banner danger' : 'strong-banner warn';
+    el.innerHTML = groupingLoadCompleteBannerHtml(scheduleMode());
+    el.style.display = '';
+    return;
+  }
+  const content = cabId ? state.furnaces.find((f) => f.cabinetId === cabId && !f.hidden) : undefined;
+  const qty = content
+    ? validateFurnace(content, ruleCtx(state.furnaces)).find((i) => i.code === 'QTY_EXCEEDED')
+    : undefined;
+  if (qty) {
+    el.className = 'strong-banner danger';
+    el.innerHTML = escapeHtml(qty.msg);
+    el.style.display = '';
+    return;
+  }
+  el.style.display = 'none';
+  el.innerHTML = '';
+}
+
 function renderGrouping(): void {
   const toolbar = $opt('#grpToolbar');
   if (!toolbar) return;
   toolbar.innerHTML = groupingToolbarContractHtml();
   $$('#grpEntryTabs .shift-tab').forEach((t) => t.classList.toggle('active', t.dataset.grpEntry === state.grpEntry));
   $$('#grpScheduleModeTabs .shift-tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === scheduleMode()));
+  renderGroupingModeBanner();
 
   const runtimes = currentRuntimes();
   const body = $('#grpBody');
@@ -969,7 +1014,7 @@ function renderGrouping(): void {
         return `<div class="grp-cab ${sel} ${disabled ? 'disabled' : ''}" data-grp-cab="${escapeHtml(c.id)}">
           <div class="fname">${escapeHtml(c.displayCode)} <span class="hint">${escapeHtml(c.canonicalId)}</span></div>
           <div class="sub">${c.base}基地 · 额定 ${c.ratedLoadM3} m³</div>
-          <div>${status === 'sterilizing' ? '<span class="tag tag-red">灭菌中 · 禁用可见</span>' : `<span class="tag tag-default">${runtimeLabel(status)}</span>`}
+          <div>${groupingRuntimeTagsHtml(status)}
             ${load ? `<span class="tag tag-green">${(load.fillRate || 0) * 100 | 0}%</span>` : ''}
             ${load && !load.date ? '<span class="tag tag-default">未排</span>' : ''}
           </div>
@@ -1034,9 +1079,7 @@ function renderGrouping(): void {
       const sel = state.grpSelectedCabinetId === r.cabinetId ? 'selected' : '';
       return `<div class="grp-cab ${sel} ${r.selectable ? '' : 'disabled'}" data-grp-cab="${escapeHtml(r.cabinetId)}">
         <div class="fname">${escapeHtml(r.cabinet.displayCode)}</div>
-        <div>${r.runtime === 'sterilizing' ? '<span class="tag tag-red">灭菌中 · 禁用可见</span>' : `<span class="tag tag-default">${runtimeLabel(r.runtime)}</span>`}
-          ${r.runtime === 'loadComplete' ? '<span class="tag tag-orange">待入炉 · 不当空闲</span>' : ''}
-        </div>
+        <div>${groupingRuntimeTagsHtml(r.runtime)}</div>
         ${r.disabledReason ? `<div class="hint">${escapeHtml(r.disabledReason)}</div>` : ''}
       </div>`;
     })

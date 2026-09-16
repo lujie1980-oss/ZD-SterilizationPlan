@@ -21,6 +21,9 @@ export interface Tray {
   cabinetId: string;
   level: number;
   displayName?: string;
+  /** 托盘额定容积；超此体积须提示「超托盘」。旧快照可仅有 ratedLoadM3 */
+  capacityM3?: number;
+  /** @deprecated 迁移别名，等同 capacityM3 */
   ratedLoadM3?: number;
   maxBoxes?: number;
   maxBoards?: number;
@@ -355,6 +358,11 @@ export interface RuleContext {
   poolById: (id: string) => StockLine | undefined;
   config: AppConfig;
   sameShiftFurnaces: FurnaceRun[];
+  /** 托盘主数据；缺省时跳过 TRAY_OVER */
+  trayMaster?: Tray[];
+  /** 全量组柜计划（含未排）；缺省回退 sameShiftFurnaces，用于 OnTray 剩余量 */
+  allContents?: CabinetContent[];
+  runtimes?: CabinetRuntime[];
 }
 
 export const ISSUE_CODES = {
@@ -375,6 +383,7 @@ export const ISSUE_CODES = {
   ACTIVE_CONTENT: 'ACTIVE_CONTENT',
   QTY_EXCEEDED: 'QTY_EXCEEDED',
   TRAY_REQUIRED: 'TRAY_REQUIRED',
+  TRAY_OVER: 'TRAY_OVER',
 } as const;
 
 export type IssueCode = (typeof ISSUE_CODES)[keyof typeof ISSUE_CODES];

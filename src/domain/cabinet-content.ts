@@ -123,25 +123,61 @@ export function hydrateTraysFromLines(opts: {
   return trays.map((t) => syncTrayAggregates(t, poolById, largeBoxVol));
 }
 
-export function occupiedBoxesOf(stockLineId: string, contents: CabinetContent[]): number {
+export function trayCapacityM3(tray: Pick<Tray, 'capacityM3' | 'ratedLoadM3'> | undefined): number {
+  return tray?.capacityM3 ?? tray?.ratedLoadM3 ?? 0;
+}
+
+export function isTrayOver(vol: number, capacityM3: number): boolean {
+  return capacityM3 > 0 && vol > capacityM3 + 1e-9;
+}
+
+function occupiedQty(line: StockLine, contents: CabinetContent[], kind: 'boxes' | 'vol', excludeContentId?: string): number {
   let n = 0;
   for (const c of contents) {
-    if (c.hidden) continue;
+    if (c.hidden || c.id === excludeContentId) continue;
+    let hit = false;
     for (const tray of c.trays || []) {
       for (const row of tray.onTray || []) {
-        if (row.stockLineId === stockLineId) n += row.boxes || 0;
+        if (row.stockLineId !== line.id) continue;
+        n += kind === 'boxes' ? row.boxes || 0 : row.vol || 0;
+        hit = true;
       }
     }
-    if (!c.trays?.length && c.lines.includes(stockLineId)) {
-      /* flattened-only snapshot: treat as fully occupied once */
-      n += 0;
+    if (!hit && c.lines.includes(line.id)) {
+      n += kind === 'boxes' ? line.boxes : line.vol;
     }
   }
   return n;
 }
 
-export function remainingBoxes(line: StockLine, contents: CabinetContent[]): number {
-  return Math.max(0, line.boxes - occupiedBoxesOf(line.id, contents.filter((c) => !c.lines.includes(line.id) || false)));
+/** 各柜 OnTray 已占用箱数；无 trays 的扁平行视为整行占用 */
+export function occupiedBoxesOf(line: StockLine, contents: CabinetContent[], excludeContentId?: string): number {
+  return occupiedQty(line, contents, 'boxes', excludeContentId);
+}
+
+export function occupiedVolOf(line: StockLine, contents: CabinetContent[], excludeContentId?: string): number {
+  return occupiedQty(line, contents, 'vol', excludeContentId);
+}
+
+export function remainingBoxes(line: StockLine, contents: CabinetContent[], excludeContentId?: string): number {
+  return Math.max(0, line.boxes - occupiedBoxesOf(line, contents, excludeContentId));
+}
+
+export function remainingVol(line: StockLine, contents: CabinetContent[], excludeContentId?: string): number {
+  return Math.max(0, line.vol - occupiedVolOf(line, contents, excludeContentId));
+}
+
+export function onTrayShareOf(content: CabinetContent, stockLineId: string): { boxes: number; vol: number } {
+  let boxes = 0;
+  let vol = 0;
+  for (const tray of content.trays || []) {
+    for (const row of tray.onTray || []) {
+      if (row.stockLineId !== stockLineId) continue;
+      boxes += row.boxes || 0;
+      vol += row.vol || 0;
+    }
+  }
+  return { boxes, vol };
 }
 
 export function cloneContent(f: CabinetContent): CabinetContent {
