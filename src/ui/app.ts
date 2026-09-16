@@ -21,6 +21,7 @@ import type {
   FurnaceRun,
   FurnaceSchedule,
   GroupingEntry,
+  PackSuggestPolicy,
   Shift,
   StockLine,
   ValidationIssue,
@@ -30,6 +31,7 @@ import { buildDayPlanCsv } from '../domain/export-csv';
 import { deriveFacts } from '../domain/facts';
 import {
   autoPackCabinet,
+  autoPackDemands,
   focusDemand,
   listCandidateCabinets,
   listEligibleForCabinet,
@@ -51,6 +53,13 @@ import {
 } from '../domain/commit-gate';
 import { effectiveMinLoadM3, setProcessMinLoad } from '../domain/min-load';
 import {
+  clonePackSuggestPolicy,
+  commitPackSuggestPolicy,
+  policyFromPreset,
+  resolvePackSuggestPolicy,
+  restoreDefaultPackSuggestPolicy,
+} from '../domain/pack-suggest-policy';
+import {
   assignedIds,
   currentFurnaces,
   furnaceBoxes,
@@ -68,6 +77,7 @@ import { loadPlan, savePlan, type LoadedPlan } from '../persistence/plan-store-v
 import { $, $$, $opt, escapeHtml, toast } from './dom';
 import {
   groupingLoadCompleteBannerHtml,
+  groupingPolicyPanelHtml,
   groupingRuntimeTagsHtml,
   groupingToolbarContractHtml,
   placementChip,
@@ -101,6 +111,7 @@ interface UiState {
   grpFocusedDemandId: string | null;
   grpCheckedDemandIds: Set<string>;
   grpLayerHint: boolean;
+  grpPolicyDraft: PackSuggestPolicy;
   tasks: CabinetTask[];
   schedules: FurnaceSchedule[];
   nextTaskSeq: number;
@@ -135,6 +146,42 @@ function persist(): void {
     sparseWiped: false,
   };
   savePlan(plan);
+}
+
+function markPolicyDraftCustom(): void {
+  state.grpPolicyDraft.preset = 'custom';
+  state.grpPolicyDraft.id = 'custom';
+  state.grpPolicyDraft.name = '自定义';
+}
+
+function renderPolicyPanel(): void {
+  const el = $opt('#grpPolicyPanel');
+  if (!el) return;
+  el.innerHTML = groupingPolicyPanelHtml(state.grpPolicyDraft);
+}
+
+function savePackPolicyFromDraft(): void {
+  const previous = resolvePackSuggestPolicy(state.config);
+  const result = commitPackSuggestPolicy(previous, state.grpPolicyDraft);
+  if (!result.ok) {
+    toast(`${result.code}：${result.message}`, 'error');
+    return;
+  }
+  state.config = { ...state.config, packSuggestPolicy: result.policy };
+  state.grpPolicyDraft = clonePackSuggestPolicy(result.policy);
+  persist();
+  renderPolicyPanel();
+  toast('建议策略已保存，将在下次自动组柜生效');
+}
+
+function restorePackPolicyDefaults(): void {
+  const previous = resolvePackSuggestPolicy(state.config);
+  const next = restoreDefaultPackSuggestPolicy(previous);
+  state.config = { ...state.config, packSuggestPolicy: next };
+  state.grpPolicyDraft = clonePackSuggestPolicy(next);
+  persist();
+  renderPolicyPanel();
+  toast('已恢复默认建议策略（填满优先 80%，交期簇关），下次自动组柜生效');
 }
 
 function poolById(id: string): StockLine | undefined {
@@ -822,14 +869,8 @@ function runAutoPack(): void {
     toast('请勾选需求后再自动组柜（单击行仅查看）', 'warn');
     return;
   }
-  const cabs = listCandidateCabinets({ lineIds: ids, poolById, cabinets: CABINETS, runtimes }).filter((r) => !r.autoPackBlocked);
-  const target = cabs[0];
-  if (!target) {
-    toast('没有可自动组入的柜（灭菌中/装填完毕已排除）', 'warn');
-    return;
-  }
-  const packed = autoPackCabinet({
-    cabinetId: target.cabinetId,
+  const packed = autoPackDemands({
+    lineIds: ids,
     pool: eligiblePool(),
     contents: state.furnaces,
     cabinets: CABINETS,
@@ -837,24 +878,18 @@ function runAutoPack(): void {
     trayMaster: TRAYS,
     runtimes,
     config: state.config,
-    nextId: `CC${state.nextFurnaceSeq++}`,
+    nextSeq: state.nextFurnaceSeq,
     poolById,
-    selectedLineIds: ids,
   });
-  if (!packed.ok || !packed.content) {
+  if (!packed.ok) {
     toast(packed.message, 'error');
-    return;
-  }
-  const replaced = replaceCabinetActive(state.furnaces, packed.content);
-  if (!replaced.ok) {
-    toast(replaced.issue?.msg || '无法写入', 'error');
     return;
   }
   const decision = decideCommit({
     previous: state.furnaces,
-    next: replaced.contents,
+    next: packed.contents,
     config: state.config,
-    ctx: ruleCtx(replaced.contents),
+    ctx: ruleCtx(packed.contents),
     editSource: 'auto',
   });
   if (decision.aborted) {
@@ -862,11 +897,14 @@ function runAutoPack(): void {
     return;
   }
   state.furnaces = decision.persisted;
-  state.grpSelectedCabinetId = target.cabinetId;
+  state.nextFurnaceSeq = packed.nextSeq;
+  const firstCab = packed.contents.find((c) => c.lines.length && !c.hidden)?.cabinetId;
+  if (firstCab) state.grpSelectedCabinetId = firstCab;
   state.grpLayerHint = true;
   persist();
   render();
-  toast(packed.message);
+  const extra = packed.unplaced.length ? `；未组入 ${packed.unplaced.length} 行` : '';
+  toast(`${packed.message}${extra}`);
 }
 
 function runManualPack(): void {
@@ -986,6 +1024,7 @@ function renderGrouping(): void {
   toolbar.innerHTML = groupingToolbarContractHtml();
   $$('#grpEntryTabs .shift-tab').forEach((t) => t.classList.toggle('active', t.dataset.grpEntry === state.grpEntry));
   $$('#grpScheduleModeTabs .shift-tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === scheduleMode()));
+  renderPolicyPanel();
   renderGroupingModeBanner();
 
   const runtimes = currentRuntimes();
@@ -1749,6 +1788,49 @@ function bind(): void {
       );
       state.grpCheckedDemandIds = new Set(next.checkedIds);
       renderGrouping();
+      return;
+    }
+    if (t.id === 'grpPolicyPreset') {
+      const v = (t as HTMLSelectElement).value;
+      if (v === 'dueCluster' || v === 'balanced' || v === 'fillFirst') {
+        state.grpPolicyDraft = policyFromPreset(v, state.grpPolicyDraft);
+      } else {
+        markPolicyDraftCustom();
+      }
+      renderPolicyPanel();
+      return;
+    }
+    if (t.id === 'grpFillModeFill' || t.id === 'grpFillModeBalance') {
+      state.grpPolicyDraft.fillMode = (t as HTMLInputElement).value === 'balanceAcrossCabinets' ? 'balanceAcrossCabinets' : 'fillOneFirst';
+      markPolicyDraftCustom();
+      renderPolicyPanel();
+      return;
+    }
+    if (t.id === 'grpDueClusterEnabled') {
+      const on = (t as HTMLInputElement).checked;
+      const dims = state.grpPolicyDraft.dimensions.map((d) =>
+        d.code === 'dueCluster' ? { ...d, enabled: on } : { ...d },
+      );
+      if (!dims.some((d) => d.code === 'dueCluster')) dims.push({ code: 'dueCluster', enabled: on });
+      state.grpPolicyDraft.dimensions = dims;
+      markPolicyDraftCustom();
+      renderPolicyPanel();
+      return;
+    }
+    if (t.id === 'grpDueWindowDays') {
+      const n = Number((t as HTMLInputElement).value);
+      if (Number.isInteger(n)) state.grpPolicyDraft.dueWindowDays = n;
+      markPolicyDraftCustom();
+      return;
+    }
+    if (t.id === 'grpTargetFillRate') {
+      const n = Number((t as HTMLInputElement).value);
+      if (Number.isFinite(n)) state.grpPolicyDraft.targetFillRate = n / 100;
+      markPolicyDraftCustom();
+      const label = $opt('#grpTargetFillLabel');
+      if (label) label.textContent = `${Math.round(state.grpPolicyDraft.targetFillRate * 100)}%`;
+      const preset = $opt('#grpPolicyPreset') as HTMLSelectElement | null;
+      if (preset) preset.value = 'custom';
     }
   });
 
@@ -1770,6 +1852,42 @@ function bind(): void {
     }
     if (t.id === 'btnLoadComplete' || t.closest('#btnLoadComplete')) {
       runMarkLoadComplete();
+      return;
+    }
+    if (t.id === 'btnSavePackPolicy' || t.closest('#btnSavePackPolicy')) {
+      savePackPolicyFromDraft();
+      return;
+    }
+    if (t.id === 'btnRestorePackPolicy' || t.closest('#btnRestorePackPolicy')) {
+      restorePackPolicyDefaults();
+      return;
+    }
+    const dimUp = t.closest('[data-dim-up]') as HTMLElement | null;
+    if (dimUp?.dataset.dimUp != null) {
+      const i = Number(dimUp.dataset.dimUp);
+      if (i > 0) {
+        const dims = state.grpPolicyDraft.dimensions.slice();
+        const tmp = dims[i - 1]!;
+        dims[i - 1] = dims[i]!;
+        dims[i] = tmp;
+        state.grpPolicyDraft.dimensions = dims;
+        markPolicyDraftCustom();
+        renderPolicyPanel();
+      }
+      return;
+    }
+    const dimDown = t.closest('[data-dim-down]') as HTMLElement | null;
+    if (dimDown?.dataset.dimDown != null) {
+      const i = Number(dimDown.dataset.dimDown);
+      const dims = state.grpPolicyDraft.dimensions.slice();
+      if (i >= 0 && i < dims.length - 1) {
+        const tmp = dims[i + 1]!;
+        dims[i + 1] = dims[i]!;
+        dims[i] = tmp;
+        state.grpPolicyDraft.dimensions = dims;
+        markPolicyDraftCustom();
+        renderPolicyPanel();
+      }
       return;
     }
     const grpMode = t.closest('#grpScheduleModeTabs [data-mode]') as HTMLElement | null;
@@ -1928,6 +2046,7 @@ export function bootApp(): void {
     grpFocusedDemandId: null,
     grpCheckedDemandIds: new Set(),
     grpLayerHint: false,
+    grpPolicyDraft: clonePackSuggestPolicy(resolvePackSuggestPolicy(loaded.config)),
     tasks: loaded.tasks || [],
     schedules: loaded.schedules || [],
     nextTaskSeq: loaded.nextTaskSeq || 1,

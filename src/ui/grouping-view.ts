@@ -1,5 +1,6 @@
 import { escapeHtml } from './dom';
-import type { RuntimeStatus, ScheduleMode } from '../domain/entities';
+import type { PackSuggestPolicy, RuntimeStatus, ScheduleMode } from '../domain/entities';
+import { PACK_DIM_LABELS, PACK_PRESET_LABELS } from '../domain/pack-suggest-policy';
 
 export function groupingToolbarContractHtml(opts?: { includeShift?: boolean; includeOnlineDate?: boolean }): string {
   const shift = opts?.includeShift
@@ -22,6 +23,62 @@ export function groupingToolbarContractHtml(opts?: { includeShift?: boolean; inc
     <button class="btn" id="btnLoadComplete" type="button">装填完毕</button>
     <span class="hint">组柜不按结果日或班次筛选 · 完成后未排</span>
     ${shift}${date}
+  </div>`;
+}
+
+export function groupingPolicyPanelHtml(policy: PackSuggestPolicy): string {
+  const fillPct = Math.round((policy.targetFillRate || 0) * 100);
+  const dueOn = policy.dimensions.some((d) => d.code === 'dueCluster' && d.enabled);
+  const preset = policy.preset || 'custom';
+  const dims = policy.dimensions
+    .map((d, i) => {
+      const label = PACK_DIM_LABELS[d.code] || d.code;
+      const on = d.enabled ? '开' : '关';
+      return `<li class="grp-dim-item" data-dim-index="${i}">
+        <span class="grp-dim-ord">${i + 1}</span>
+        <span>${escapeHtml(label)}</span>
+        <span class="hint">${on}</span>
+        <button class="btn btn-sm" type="button" data-dim-up="${i}" ${i === 0 ? 'disabled' : ''}>上移</button>
+        <button class="btn btn-sm" type="button" data-dim-down="${i}" ${i === policy.dimensions.length - 1 ? 'disabled' : ''}>下移</button>
+      </li>`;
+    })
+    .join('');
+  return `<div class="grp-policy" data-testid="pack-suggest-policy">
+    <div class="grp-policy-hd">
+      <strong>建议策略</strong>
+      <span class="hint">保存后下次自动组柜生效 · 不改写已有载荷</span>
+    </div>
+    <div class="grp-policy-row">
+      <label>预设
+        <select class="select" id="grpPolicyPreset">
+          <option value="fillFirst" ${preset === 'fillFirst' ? 'selected' : ''}>${PACK_PRESET_LABELS.fillFirst}</option>
+          <option value="dueCluster" ${preset === 'dueCluster' ? 'selected' : ''}>${PACK_PRESET_LABELS.dueCluster}</option>
+          <option value="balanced" ${preset === 'balanced' ? 'selected' : ''}>${PACK_PRESET_LABELS.balanced}</option>
+          <option value="custom" ${preset === 'custom' ? 'selected' : ''}>${PACK_PRESET_LABELS.custom}</option>
+        </select>
+      </label>
+      <div class="grp-policy-mode" role="radiogroup" aria-label="填满模式">
+        <span class="label">填满模式</span>
+        <label><input type="radio" name="grpFillMode" id="grpFillModeFill" value="fillOneFirst" ${policy.fillMode === 'fillOneFirst' ? 'checked' : ''} /> 先填满一台</label>
+        <label><input type="radio" name="grpFillMode" id="grpFillModeBalance" value="balanceAcrossCabinets" ${policy.fillMode === 'balanceAcrossCabinets' ? 'checked' : ''} /> 多柜均衡</label>
+      </div>
+      <label>目标装柜率 <strong id="grpTargetFillLabel">${fillPct}%</strong>
+        <input class="grp-policy-range" id="grpTargetFillRate" type="range" min="70" max="95" step="5" value="${fillPct}" />
+      </label>
+      <label class="grp-policy-due">
+        <input type="checkbox" id="grpDueClusterEnabled" ${dueOn ? 'checked' : ''} /> 交期簇
+        <span class="hint">窗口</span>
+        <input class="input" id="grpDueWindowDays" type="number" min="1" max="14" step="1" value="${policy.dueWindowDays}" style="width:64px" />
+        <span class="hint">天</span>
+      </label>
+    </div>
+    <div class="grp-policy-row">
+      <span class="label">维度优先级</span>
+      <ol class="grp-dim-list">${dims}</ol>
+      <button class="btn btn-primary" id="btnSavePackPolicy" type="button">保存策略</button>
+      <button class="btn" id="btnRestorePackPolicy" type="button">恢复默认</button>
+    </div>
+    <div class="grp-policy-iron" data-testid="pack-policy-iron">硬约束（指定柜 / BOX_LIMIT 口径2 / 托盘 / 灭菌中 / 装填完毕）与双模式不可配掉；组柜不建任务。保存后下次自动组柜生效。</div>
   </div>`;
 }
 
