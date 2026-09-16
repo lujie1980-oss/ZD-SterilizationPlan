@@ -19,6 +19,37 @@ npm test         # Vitest 领域单测
 VITE_ENABLE_DEMO_SEED=false npm run build
 ```
 
+## Docker 一键运行（本机）
+
+本仓库是 Vite + TypeScript 静态 SPA，**无后端**。用 Docker 在本机构建 `dist`，由 nginx 提供 HTTP。数据仍在浏览器 `localStorage`（key：`zhende_sterilization_plan_v2`），无真实 SAP/WMS。本 compose **只部署本 SPA**，不含旧 HTML 原型或其他服务。
+
+前提：已安装 Docker Desktop，或 Docker Engine + Compose v2。
+
+```bash
+docker compose up -d --build
+```
+
+浏览器打开：**http://127.0.0.1:18080/**
+
+默认端口：本机 **18080** → 容器 **80**（nginx）。
+
+停止并删除本 compose 容器：
+
+```bash
+docker compose down
+```
+
+若本机 **18080** 已被占用，把 `docker-compose.yml` 的 `ports` 改为备用端口 **28080**：
+
+```yaml
+ports:
+  - "28080:80"
+```
+
+然后重新执行 `docker compose up -d --build`，浏览器打开 **http://127.0.0.1:28080/**。
+
+说明：无 HTTPS、无生产加固、无 API。换浏览器或清除站点数据会丢失演示进度。
+
 ## 演示路径（验收）
 
 1. **组柜（变更-1 主路径）**
