@@ -1,4 +1,5 @@
 import type { AppConfig, LegacyConfigInput, LoadConfig } from '../domain/entities';
+import { coercePackSuggestPolicy, defaultPackSuggestPolicy } from '../domain/pack-suggest-policy';
 
 export const STORAGE_KEY = 'zhende_sterilization_plan_v2';
 export const STORAGE_KEY_LEGACY = 'zhende_sterilization_plan_v1';
@@ -93,6 +94,7 @@ export function defaultAppConfig(): AppConfig {
     mix: { customer: 'warn' },
     fillRateDenom: 'ratedLoadM3',
     grouping: { skipInOtherCabinet: true, defaultTrayCount: 4 },
+    packSuggestPolicy: defaultPackSuggestPolicy(),
   };
 }
 
@@ -127,6 +129,7 @@ export function mergeConfig(partial?: LegacyConfigInput | null): AppConfig {
       skipInOtherCabinet: partial.grouping?.skipInOtherCabinet !== false,
       defaultTrayCount: partial.grouping?.defaultTrayCount ?? base.grouping.defaultTrayCount,
     },
+    packSuggestPolicy: coercePackSuggestPolicy(partial.packSuggestPolicy),
   };
 }
 
@@ -151,5 +154,6 @@ export function persistableConfig(config: AppConfig): AppConfig {
       skipInOtherCabinet: config.grouping?.skipInOtherCabinet !== false,
       defaultTrayCount: config.grouping?.defaultTrayCount ?? 4,
     },
+    packSuggestPolicy: coercePackSuggestPolicy(config.packSuggestPolicy),
   };
 }

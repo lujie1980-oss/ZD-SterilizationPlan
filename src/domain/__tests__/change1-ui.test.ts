@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   groupingHasShiftOrOnlineDateFilter,
   groupingLoadCompleteBannerHtml,
+  groupingPolicyPanelHtml,
   groupingRuntimeTagsHtml,
   groupingToolbarContractHtml,
   placementChip,
@@ -42,5 +43,40 @@ describe('变更-1 组柜 UI 契约 (C1-11/19/22)', () => {
     expect(groupingLoadCompleteBannerHtml('auto')).toMatch(/自动禁止再拼/);
     expect(groupingLoadCompleteBannerHtml('manual')).toMatch(/强预警/);
     expect(groupingLoadCompleteBannerHtml('manual')).toContain('REPACK_AFTER_LOAD_COMPLETE');
+  });
+});
+
+describe('变更-3 建议策略面板 UI', () => {
+  it('面板含预设/填满模式/目标装柜率/交期簇/保存/恢复默认/铁律提示', () => {
+    const html = groupingPolicyPanelHtml({
+      id: 'default',
+      name: '填满优先（默认）',
+      version: 1,
+      preset: 'fillFirst',
+      fillMode: 'fillOneFirst',
+      targetFillRate: 0.8,
+      dueWindowDays: 3,
+      dimensions: [
+        { code: 'gapMin', enabled: true },
+        { code: 'targetFill', enabled: true },
+        { code: 'dueCluster', enabled: false },
+      ],
+      applyMode: 'nextAutoPackOnly',
+      updatedAt: '',
+    });
+    expect(html).toContain('建议策略');
+    expect(html).toContain('填满优先');
+    expect(html).toContain('交期簇优先');
+    expect(html).toContain('多柜均衡');
+    expect(html).toContain('先填满一台');
+    expect(html).toContain('多柜均衡');
+    expect(html).toContain('目标装柜率');
+    expect(html).toContain('80%');
+    expect(html).toContain('交期簇');
+    expect(html).toContain('保存策略');
+    expect(html).toContain('恢复默认');
+    expect(html).toContain('硬约束');
+    expect(html).toContain('下次自动组柜');
+    expect(html).toContain('data-testid="pack-suggest-policy"');
   });
 });

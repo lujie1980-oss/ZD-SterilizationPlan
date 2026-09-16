@@ -24,11 +24,12 @@ VITE_ENABLE_DEMO_SEED=false npm run build
 1. **组柜（变更-1 主路径）**
    1. 侧栏「组柜」默认进入。入口 **选柜 / 选需求**，无上线日期筛选、无白夜班切换。
    2. **选柜**：点柜 9 → 完整可进列表分栏「已进本柜 / 还可排入 / 已进其他柜」；灭菌中柜（演示柜14）灰显禁用但仍可见。
-  3. 点「自动组柜」：可见分层（托盘主数据）→ 装柜；柜卡「未排」，`date/shift=null`，**不建 CabinetTask**。层体积超过 `Tray.capacityM3` 时分层卡片显示红色「超托盘」且 `TRAY_OVERFLOW` error（C1-28：auto 拒绝落盘，手工可落盘+强预警）；装柜率分母仍为柜 `ratedLoadM3`。
-  4. **选需求**：单击行只查看可组柜列表（不勾选）；勾选框才进入多选批量。
-  5. 自动模式 error 不落盘；手工调整可违例。FactStrip / 自动|手工闸门（二期 A）仍在。
-  6. **C1-31 装填完毕**：点「装填完毕」后柜为待入炉（不当空闲）。自动排产再拼 **拒绝落盘**；切「手工调整」可再拼，组柜红条 + 校验中心 `REPACK_AFTER_LOAD_COMPLETE`。
-  7. **C1-40 OnTray 分量**：写入箱数/体积不得超过该 StockLine 剩余可排量（已占用 OnTray 之和）；超量 `ON_TRAY_QTY_OVERFLOW` 拒绝自动落盘。
+   3. 点「自动组柜」：按当前 **建议策略**（默认填满优先 80%、交期簇关）挑行；可见分层（托盘主数据）→ 装柜；柜卡「未排」，`date/shift=null`，**不建 CabinetTask**。层体积超过 `Tray.capacityM3` 时分层卡片显示红色「超托盘」且 `TRAY_OVERFLOW` error（C1-28：auto 拒绝落盘，手工可落盘+强预警）；装柜率分母仍为柜 `ratedLoadM3`。
+   4. **建议策略面板**：预设（填满优先 / 交期簇优先 / 多柜均衡 / 自定义）、先填满一台 vs 多柜均衡、目标装柜率 70%～95%、交期簇开关与窗口天数。点「保存策略」只写入 `config.packSuggestPolicy`，**不**改写已有载荷；点「自动组柜」才按新策略重算。「恢复默认」回到填满优先 80% + 交期窗 3 天 + 交期簇关。硬约束与双模式不可配掉。
+   5. **选需求**：单击行只查看可组柜列表（不勾选）；勾选框才进入多选批量。自动组柜按策略为行选柜（填满优先集中一台，多柜均衡分散）。
+   6. 自动模式 error 不落盘；手工调整可违例。FactStrip / 自动|手工闸门（二期 A）仍在。
+   7. **C1-31 装填完毕**：点「装填完毕」后柜为待入炉（不当空闲）。自动排产再拼 **拒绝落盘**；切「手工调整」可再拼，组柜红条 + 校验中心 `REPACK_AFTER_LOAD_COMPLETE`。
+   8. **C1-40 OnTray 分量**：写入箱数/体积不得超过该 StockLine 剩余可排量（已占用 OnTray 之和）；超量 `ON_TRAY_QTY_OVERFLOW` 拒绝自动落盘。
 2. **已排期浏览（过渡）**：原日排产工作台。顶部日期只过滤**已排期**结果，不作为组柜前置。
 3. **建议拼炉**：将未分配 D002 装入柜 9（策略 `D002_CAB9_DEMO`），结果为未排。
 4. **拆炉向导（场景 A / TC-SPLIT-02）**
@@ -60,6 +61,7 @@ src/
     suggest-combine.ts   # D002 → 柜9 演示拼炉
     export-csv.ts        # 日计划 CSV
     grouping.ts          # 双入口完整可进列表 / 自动组柜 / 装填完毕
+    pack-suggest-policy.ts # 变更-3 组柜建议策略（校验 / 打分 / 预设）
     cabinet-content.ts   # CabinetContent + TraysInCabinetContent + StockLinesOnTray
     cabinet-task.ts      # 甘特才建 Task 链并写回 date/shift
     cabinet-runtime.ts   # 柜运行态（与主数据分离）
@@ -81,7 +83,7 @@ src/
 ## 持久化（plan v2）
 
 - Key：`zhende_sterilization_plan_v2`（兼容读取 `…_v1` 且非稀疏时迁移）
-- 字段：`date` / `shift` / `furnaces`（= `contents` 双写，含可选 `manualViolation`） / `contents` / `tasks` / `runtimes` / `schedules` / `nextFurnaceSeq` / **`virtualLines: StockLine[]`** / `config`（含 **`scheduleMode`**、可选 **`overrideNotes`**） / `planSeedVersion`
+- 字段：`date` / `shift` / `furnaces`（= `contents` 双写，含可选 `manualViolation`） / `contents` / `tasks` / `runtimes` / `schedules` / `nextFurnaceSeq` / **`virtualLines: StockLine[]`** / `config`（含 **`scheduleMode`**、可选 **`overrideNotes`**、**`packSuggestPolicy`**） / `planSeedVersion`
 - 组柜结构：`CabinetContent` → `TraysInCabinetContent`（必填 `trayId`）→ `StockLinesOnTray`；旧 `FurnaceRun`/`Layer`/`OnLayer` 仅为类型别名
 - 组柜阶段 `date`/`shift`/`taskId` 为 null；进炉同步写回并建 `CabinetTask` 链（prev/next/FirstTask/IsFirst）
 - 旧快照缺 `scheduleMode` 时缺省为 **`auto`**；切换模式不清除炉次
@@ -118,6 +120,7 @@ src/
 | `fp.defaultHorizon` | 14 | 甘特默认视野 |
 | `fillRateDenom` | `ratedLoadM3` | 装柜率分母（不用日产能） |
 | `grouping.skipInOtherCabinet` | true | 自动组柜跳过已进其他柜 |
+| `config.packSuggestPolicy` | 填满优先 80%，交期簇关 | 变更-3：组柜自动建议。`fillMode`=`fillOneFirst`\|`balanceAcrossCabinets`；`targetFillRate` 0.70～0.95；`dueWindowDays` 1～14；`dimensions` 序=优先级（`gapMin` / `targetFill` / `dueCluster`）。缺省或旧 plan 无字段视为默认。非法配置拒存（`PACK_POLICY_*`）。保存后**下次自动组柜**生效 |
 | `storage.key` | `zhende_sterilization_plan_v2` | |
 
 解析天数在工艺主数据（D002=2 已确认；P006/P252/亚澳/EO通用 pending）。

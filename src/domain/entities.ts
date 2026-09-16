@@ -15,6 +15,28 @@ export type PlacementStatus = 'inThisCabinet' | 'inOtherCabinet' | 'unassigned';
 export type RuntimeStatus = 'idle' | 'loading' | 'loadComplete' | 'sterilizing' | 'outOfService';
 export type RuntimeSource = 'derived' | 'manual' | 'equipment';
 export type GroupingEntry = 'cabinet' | 'demand';
+export type FillMode = 'fillOneFirst' | 'balanceAcrossCabinets';
+export type PackDimensionCode = 'gapMin' | 'targetFill' | 'dueCluster';
+export type PackSuggestPreset = 'fillFirst' | 'dueCluster' | 'balanced' | 'custom';
+export type PackSuggestApplyMode = 'nextAutoPackOnly';
+
+export interface PackDimensionSpec {
+  code: PackDimensionCode;
+  enabled: boolean;
+}
+
+export interface PackSuggestPolicy {
+  id: string;
+  name: string;
+  version: number;
+  preset: PackSuggestPreset;
+  fillMode: FillMode;
+  targetFillRate: number;
+  dueWindowDays: number;
+  dimensions: PackDimensionSpec[];
+  applyMode: PackSuggestApplyMode;
+  updatedAt: string;
+}
 
 export interface Tray {
   id: string;
@@ -327,6 +349,8 @@ export interface AppConfig {
     skipInOtherCabinet: boolean;
     defaultTrayCount: number;
   };
+  /** 变更-3：组柜自动建议策略；缺省视为填满优先默认 */
+  packSuggestPolicy: PackSuggestPolicy;
 }
 
 export type LegacyConfigInput = Partial<AppConfig> & {
@@ -364,6 +388,17 @@ export interface RuleContext {
   allContents?: CabinetContent[];
   runtimes?: CabinetRuntime[];
 }
+
+export const PACK_POLICY_ERROR_CODES = {
+  PACK_POLICY_EMPTY_DIM: 'PACK_POLICY_EMPTY_DIM',
+  PACK_POLICY_UNKNOWN_DIM: 'PACK_POLICY_UNKNOWN_DIM',
+  PACK_POLICY_DUP_DIM: 'PACK_POLICY_DUP_DIM',
+  PACK_POLICY_BAD_FILL_RATE: 'PACK_POLICY_BAD_FILL_RATE',
+  PACK_POLICY_BAD_DUE_WINDOW: 'PACK_POLICY_BAD_DUE_WINDOW',
+  PACK_POLICY_BAD_FILL_MODE: 'PACK_POLICY_BAD_FILL_MODE',
+} as const;
+
+export type PackPolicyErrorCode = (typeof PACK_POLICY_ERROR_CODES)[keyof typeof PACK_POLICY_ERROR_CODES];
 
 export const ISSUE_CODES = {
   CABINET_SCRAPPED: 'CABINET_SCRAPPED',

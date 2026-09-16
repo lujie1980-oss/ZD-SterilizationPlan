@@ -347,6 +347,56 @@ describe('plan-store-v2', () => {
     expect(again.furnaces[0]?.lines).toEqual(['P001']);
     expect(again.furnaces[0]?.manualViolation).toBe(true);
   });
+
+  it('C3-09: packSuggestPolicy 写入 plan v2 后刷新可恢复', () => {
+    const cfg = defaultAppConfig();
+    cfg.demo.enableSeed = false;
+    cfg.packSuggestPolicy = {
+      ...cfg.packSuggestPolicy,
+      preset: 'balanced',
+      fillMode: 'balanceAcrossCabinets',
+      targetFillRate: 0.75,
+      dueWindowDays: 7,
+      id: 'balanced',
+      name: '多柜均衡',
+    };
+    savePlan({
+      date: '2026-07-24',
+      shift: '白班',
+      furnaces: [{ id: 'F1', cabinetId: '柜9', date: null, shift: null, lines: ['P001'] }],
+      nextFurnaceSeq: 2,
+      virtualLines: [],
+      config: cfg,
+      planSeedVersion: 2,
+      sparseWiped: false,
+    });
+    const loaded = loadPlan();
+    expect(loaded.config.packSuggestPolicy.fillMode).toBe('balanceAcrossCabinets');
+    expect(loaded.config.packSuggestPolicy.targetFillRate).toBe(0.75);
+    expect(loaded.config.packSuggestPolicy.dueWindowDays).toBe(7);
+    expect(loaded.furnaces[0]?.lines).toEqual(['P001']);
+  });
+
+  it('C3-10: 旧 plan 无 packSuggestPolicy 视为默认，不破坏既有 Content', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        date: '2026-07-24',
+        shift: '白班',
+        furnaces: [{ id: 'F1', cabinetId: '柜9', date: null, shift: null, lines: ['P001'] }],
+        nextFurnaceSeq: 2,
+        virtualLines: [],
+        config: { d002MinLoadM3: 56, demo: { enableSeed: false } },
+        planSeedVersion: 2,
+      }),
+    );
+    const loaded = loadPlan();
+    expect(loaded.config.packSuggestPolicy.preset).toBe('fillFirst');
+    expect(loaded.config.packSuggestPolicy.fillMode).toBe('fillOneFirst');
+    expect(loaded.config.packSuggestPolicy.targetFillRate).toBe(0.8);
+    expect(loaded.config.packSuggestPolicy.dimensions.find((d) => d.code === 'dueCluster')?.enabled).toBe(false);
+    expect(loaded.furnaces[0]?.lines).toEqual(['P001']);
+  });
 });
 
 describe('eligibility', () => {
