@@ -22,6 +22,7 @@ import type {
   FurnaceSchedule,
   GroupingEntry,
   PackSuggestPolicy,
+  ScheduleSortPolicy,
   Shift,
   StockLine,
   ValidationIssue,
@@ -60,6 +61,12 @@ import {
   restoreDefaultPackSuggestPolicy,
 } from '../domain/pack-suggest-policy';
 import {
+  cloneScheduleSortPolicy,
+  commitScheduleSortPolicy,
+  resolveScheduleSortPolicy,
+  restoreDefaultScheduleSortPolicy,
+} from '../domain/schedule-sort-policy';
+import {
   assignedIds,
   currentFurnaces,
   furnaceBoxes,
@@ -83,6 +90,7 @@ import {
   placementChip,
   trayOverChip,
 } from './grouping-view';
+import { furnaceSortPolicyPanelHtml } from './furnace-plan-view';
 
 type Page = 'grouping' | 'workbench' | 'furnace-plan' | 'pool' | 'cabinets' | 'processes' | 'boxspecs' | 'validation';
 
@@ -112,6 +120,7 @@ interface UiState {
   grpCheckedDemandIds: Set<string>;
   grpLayerHint: boolean;
   grpPolicyDraft: PackSuggestPolicy;
+  fpSortPolicyDraft: ScheduleSortPolicy;
   tasks: CabinetTask[];
   schedules: FurnaceSchedule[];
   nextTaskSeq: number;
@@ -182,6 +191,36 @@ function restorePackPolicyDefaults(): void {
   persist();
   renderPolicyPanel();
   toast('已恢复默认建议策略（填满优先 80%，交期簇关），下次自动组柜生效');
+}
+
+function renderSortPolicyPanel(): void {
+  const el = $opt('#fpSortPolicyPanel');
+  if (!el) return;
+  el.innerHTML = furnaceSortPolicyPanelHtml(state.fpSortPolicyDraft);
+}
+
+function saveSortPolicyFromDraft(): void {
+  const previous = resolveScheduleSortPolicy(state.config);
+  const result = commitScheduleSortPolicy(previous, state.fpSortPolicyDraft);
+  if (!result.ok) {
+    toast(`${result.code}：${result.message}`, 'error');
+    return;
+  }
+  state.config = { ...state.config, scheduleSortPolicy: result.policy };
+  state.fpSortPolicyDraft = cloneScheduleSortPolicy(result.policy);
+  persist();
+  renderSortPolicyPanel();
+  toast('排序策略已保存，将在下次甘特同步生效');
+}
+
+function restoreSortPolicyDefaults(): void {
+  const previous = resolveScheduleSortPolicy(state.config);
+  const next = restoreDefaultScheduleSortPolicy(previous);
+  state.config = { ...state.config, scheduleSortPolicy: next };
+  state.fpSortPolicyDraft = cloneScheduleSortPolicy(next);
+  persist();
+  renderSortPolicyPanel();
+  toast('已恢复默认排序策略（date↑ · shift↑ · volume↓ · id↑），下次甘特同步生效');
 }
 
 function poolById(id: string): StockLine | undefined {
@@ -1474,6 +1513,7 @@ function renderValidation(): void {
 }
 
 function renderFurnacePlan(): void {
+  renderSortPolicyPanel();
   if (!state.fpLoads.length) syncFurnacePlan({ silent: true });
   const start = state.fpStartDate || state.date || DEFAULT_DATE;
   const horizon = state.fpHorizon || state.config.fp.defaultHorizon;
@@ -1832,6 +1872,19 @@ function bind(): void {
       const preset = $opt('#grpPolicyPreset') as HTMLSelectElement | null;
       if (preset) preset.value = 'custom';
     }
+    const sortEnable = t.closest('[data-sort-enable]') as HTMLInputElement | null;
+    if (sortEnable?.dataset.sortEnable != null) {
+      const i = Number(sortEnable.dataset.sortEnable);
+      const keys = state.fpSortPolicyDraft.keys.slice();
+      const cur = keys[i];
+      if (cur) {
+        keys[i] = { ...cur, enabled: sortEnable.checked };
+        state.fpSortPolicyDraft.keys = keys;
+        state.fpSortPolicyDraft.id = 'custom';
+        state.fpSortPolicyDraft.name = '自定义';
+        renderSortPolicyPanel();
+      }
+    }
   });
 
   document.addEventListener('click', (e) => {
@@ -1860,6 +1913,58 @@ function bind(): void {
     }
     if (t.id === 'btnRestorePackPolicy' || t.closest('#btnRestorePackPolicy')) {
       restorePackPolicyDefaults();
+      return;
+    }
+    if (t.id === 'btnSaveSortPolicy' || t.closest('#btnSaveSortPolicy')) {
+      saveSortPolicyFromDraft();
+      return;
+    }
+    if (t.id === 'btnRestoreSortPolicy' || t.closest('#btnRestoreSortPolicy')) {
+      restoreSortPolicyDefaults();
+      return;
+    }
+    const sortUp = t.closest('[data-sort-up]') as HTMLElement | null;
+    if (sortUp?.dataset.sortUp != null) {
+      const i = Number(sortUp.dataset.sortUp);
+      if (i > 0) {
+        const keys = state.fpSortPolicyDraft.keys.slice();
+        const tmp = keys[i - 1]!;
+        keys[i - 1] = keys[i]!;
+        keys[i] = tmp;
+        state.fpSortPolicyDraft.keys = keys;
+        state.fpSortPolicyDraft.id = 'custom';
+        state.fpSortPolicyDraft.name = '自定义';
+        renderSortPolicyPanel();
+      }
+      return;
+    }
+    const sortDown = t.closest('[data-sort-down]') as HTMLElement | null;
+    if (sortDown?.dataset.sortDown != null) {
+      const i = Number(sortDown.dataset.sortDown);
+      const keys = state.fpSortPolicyDraft.keys.slice();
+      if (i < keys.length - 1) {
+        const tmp = keys[i + 1]!;
+        keys[i + 1] = keys[i]!;
+        keys[i] = tmp;
+        state.fpSortPolicyDraft.keys = keys;
+        state.fpSortPolicyDraft.id = 'custom';
+        state.fpSortPolicyDraft.name = '自定义';
+        renderSortPolicyPanel();
+      }
+      return;
+    }
+    const sortDir = t.closest('[data-sort-dir]') as HTMLElement | null;
+    if (sortDir?.dataset.sortDir != null) {
+      const i = Number(sortDir.dataset.sortDir);
+      const keys = state.fpSortPolicyDraft.keys.slice();
+      const cur = keys[i];
+      if (cur) {
+        keys[i] = { ...cur, direction: cur.direction === 'asc' ? 'desc' : 'asc' };
+        state.fpSortPolicyDraft.keys = keys;
+        state.fpSortPolicyDraft.id = 'custom';
+        state.fpSortPolicyDraft.name = '自定义';
+        renderSortPolicyPanel();
+      }
       return;
     }
     const dimUp = t.closest('[data-dim-up]') as HTMLElement | null;
@@ -2047,6 +2152,7 @@ export function bootApp(): void {
     grpCheckedDemandIds: new Set(),
     grpLayerHint: false,
     grpPolicyDraft: clonePackSuggestPolicy(resolvePackSuggestPolicy(loaded.config)),
+    fpSortPolicyDraft: cloneScheduleSortPolicy(resolveScheduleSortPolicy(loaded.config)),
     tasks: loaded.tasks || [],
     schedules: loaded.schedules || [],
     nextTaskSeq: loaded.nextTaskSeq || 1,

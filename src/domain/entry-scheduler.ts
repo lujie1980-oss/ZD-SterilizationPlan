@@ -1,25 +1,17 @@
 import { aerateInfo } from '../data/seed-processes';
-import type { AppConfig, Cabinet, EntryLoad, FurnaceRun, Process, StockLine, ValidationIssue } from './entities';
+import type { AppConfig, Cabinet, EntryLoad, FurnaceRun, Process, ScheduleSortPolicy, StockLine, ValidationIssue } from './entities';
 import { ISSUE_CODES } from './entities';
-import { addDays, dayOffset, shiftRank } from './dates';
+import { addDays, dayOffset } from './dates';
 import { furnaceBoxes, furnaceCustomers, furnaceVol } from './pool';
+import { orderContents, resolveScheduleSortPolicy } from './schedule-sort-policy';
 
 export function sortFurnaceRunsForEntry(
   list: FurnaceRun[],
   poolById: (id: string) => StockLine | undefined,
+  opts?: { policy?: ScheduleSortPolicy; cabinets?: Cabinet[] },
 ): FurnaceRun[] {
-  return list.slice().sort((a, b) => {
-    const da = a.date || '9999-12-31';
-    const db = b.date || '9999-12-31';
-    if (da !== db) return da < db ? -1 : 1;
-    const sa = a.shift || '夜班';
-    const sb = b.shift || '夜班';
-    if (shiftRank(sa) !== shiftRank(sb)) return shiftRank(sa) - shiftRank(sb);
-    const va = furnaceVol(a, poolById);
-    const vb = furnaceVol(b, poolById);
-    if (vb !== va) return vb - va;
-    return String(a.id).localeCompare(String(b.id));
-  });
+  const policy = opts?.policy ?? resolveScheduleSortPolicy(undefined);
+  return orderContents(list, policy, { poolById, cabinets: opts?.cabinets });
 }
 
 export function schedulePhases(run: FurnaceRun, processCode: string, cfg: AppConfig, processes: Process[]) {
@@ -128,7 +120,10 @@ export function buildEntryLoads(opts: {
 
   const loads: EntryLoad[] = [];
   for (const [cabinetId, list] of byCab) {
-    const sorted = sortFurnaceRunsForEntry(list, poolById);
+    const sorted = sortFurnaceRunsForEntry(list, poolById, {
+      policy: resolveScheduleSortPolicy(config),
+      cabinets,
+    });
     sorted.forEach((f, idx) => {
       const lines = f.lines.map(poolById).filter((l): l is StockLine => Boolean(l));
       const primary = lines[0];
