@@ -5,10 +5,18 @@ type SeedInput = Omit<StockLine, 'vol' | 'sterilizationMethod'> & {
 };
 
 function enrich(row: SeedInput): StockLine {
+  const boxVol = row.boxVol;
+  const hasDim = row.dimL != null && row.dimW != null && row.dimH != null;
+  const sideMm = Math.max(1, Math.round(Math.cbrt(boxVol) * 1000));
   return {
     ...row,
     sterilizationMethod: row.sterilizationMethod ?? 'EO',
-    vol: +(row.boxes * row.boxVol).toFixed(2),
+    vol: +(row.boxes * boxVol).toFixed(2),
+    salesOrderNo: row.salesOrderNo || row.wo,
+    specIncomplete: hasDim ? false : false,
+    dimL: row.dimL ?? sideMm,
+    dimW: row.dimW ?? sideMm,
+    dimH: row.dimH ?? sideMm,
   };
 }
 
@@ -16,6 +24,7 @@ const RAW: SeedInput[] = [
   {
     id: 'P001', factory: '3010', workshop: '制造三车间', matType: 'N', ref: 'REF-D002-A01',
     name: 'D002 敷料包 A型', customer: 'C-华润', due: '2026-07-26', wo: 'WO-3010-78421',
+    salesOrderNo: 'SO-3010-78421', dimL: 500, dimW: 400, dimH: 500,
     boxes: 280, boxVol: 0.10, batch: 'B2026071801', loc: '待灭菌仓·老', stockStatus: '非限制',
     process: 'D002', allowed: ['柜9', '柜20'], urgent: true, suggest: '可与 P002/P003 拼',
   },

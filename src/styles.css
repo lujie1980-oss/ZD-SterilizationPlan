@@ -519,3 +519,48 @@ table.data input[type=checkbox] { cursor: pointer; width: 14px; height: 14px; }
 .fact-detail-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
 
 .wb-left { min-width: 420px; }
+
+/* ── 变更-1 组柜双入口 ── */
+.grp-toolbar {
+  background: #fff; border-radius: var(--radius); padding: 12px 16px;
+  border: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  flex-shrink: 0;
+}
+.grp-body { flex: 1; min-height: 0; overflow: hidden; }
+.grp-cols { display: grid; grid-template-columns: 220px minmax(320px, 1.2fr) minmax(260px, 0.9fr); gap: 10px; height: 100%; }
+.grp-col {
+  background: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+}
+.grp-col-hd {
+  padding: 10px 12px; font-weight: 600; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.grp-scroll { flex: 1; overflow: auto; padding: 8px; }
+.grp-cab {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px;
+  cursor: pointer; background: #fff;
+}
+.grp-cab:hover { border-color: var(--primary); }
+.grp-cab.selected { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(22,119,255,0.2); background: #e6f4ff; }
+.grp-cab.disabled { opacity: 0.7; background: #fafafa; }
+.grp-demand {
+  display: flex; gap: 8px; align-items: flex-start;
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-bottom: 8px;
+  cursor: pointer;
+}
+.grp-demand:hover { background: #f5f9ff; }
+.grp-demand.selected { background: #e6f4ff; }
+.grp-demand.focused { outline: 2px solid var(--primary); }
+.grp-part { margin-bottom: 12px; }
+.grp-part-hd { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.grp-layer {
+  border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: linear-gradient(#fff, #f5f7fa);
+  box-shadow: 0 2px 0 rgba(0,0,0,0.04);
+}
+.grp-layer-hd { padding: 6px 10px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--border); }
+.grp-layer-bd { padding: 8px 10px; font-size: 12px; color: var(--text-secondary); }
+.grp-steps { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.grp-cab-summary { margin-bottom: 10px; }
+@media (max-width: 1100px) {
+  .grp-cols { grid-template-columns: 1fr; }
+}

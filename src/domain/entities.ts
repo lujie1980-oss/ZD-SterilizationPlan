@@ -8,15 +8,42 @@ export type ScheduleMode = 'auto' | 'manual';
 export type EditSource = 'auto' | 'manual';
 export type FactTone = 'neutral' | 'warn' | 'pending' | 'danger';
 export type DueTone = 'ok' | 'soon' | 'overdue';
+export type TrayStatus = '可用' | '停用';
+export type ContentStatus = 'draft' | 'active' | 'scheduled' | 'inSterilization' | 'closed';
+export type ScheduleStatus = 'unscheduled' | 'scheduled';
+export type PlacementStatus = 'inThisCabinet' | 'inOtherCabinet' | 'unassigned';
+export type RuntimeStatus = 'idle' | 'loading' | 'loadComplete' | 'sterilizing' | 'outOfService';
+export type RuntimeSource = 'derived' | 'manual' | 'equipment';
+export type GroupingEntry = 'cabinet' | 'demand';
+
+export interface Tray {
+  id: string;
+  cabinetId: string;
+  level: number;
+  displayName?: string;
+  ratedLoadM3?: number;
+  maxBoxes?: number;
+  maxBoards?: number;
+  status: TrayStatus;
+  note?: string;
+}
 
 export interface Cabinet {
   id: string;
+  /** 规范码，如 cab-9；展示仍用 displayCode / id=柜9 以兼容一期 */
+  canonicalId: string;
+  displayCode: string;
   base: Base;
+  /** 日产能 m³（OVER_CAP / 占用） */
   capacity: number;
+  /** 装柜率分母；默认与额定装载一致 */
+  ratedLoadM3: number;
+  dailyCapacityM3?: number;
   status: CabinetStatus;
   note?: string;
   tags: string[];
   pending?: boolean;
+  maxTrayCount?: number;
 }
 
 export interface Process {
@@ -52,6 +79,14 @@ export interface StockLine {
   wo: string;
   woN?: string;
   woK?: string;
+  /** 销售订单号（交易事实；演示可与工单同源） */
+  salesOrderNo?: string;
+  salesOrderLine?: string;
+  /** 规格长宽高；历史行可空，此时 boxVol 必填并标 specIncomplete */
+  dimL?: number;
+  dimW?: number;
+  dimH?: number;
+  specIncomplete?: boolean;
   boxes: number;
   boxVol: number;
   vol: number;
@@ -74,17 +109,103 @@ export interface StockLine {
   shift?: Shift;
 }
 
-export interface FurnaceRun {
+/** 托盘上的需求行分量（正式名）；旧 OnLayer 仅迁移别名 */
+export interface StockLinesOnTray {
+  id: string;
+  trayInContentId: string;
+  stockLineId: string;
+  boxes: number;
+  vol: number;
+  splitOf?: string | null;
+}
+
+/** 计划内一层 = 一次占用某个 Tray；禁止无 trayId 的临时层 */
+export interface TraysInCabinetContent {
+  id: string;
+  contentId: string;
+  trayId: string;
+  level: number;
+  vol: number;
+  boxes: number;
+  largeBoxes: number;
+  onTray: StockLinesOnTray[];
+}
+
+export interface CabinetTask {
+  id: string;
+  contentId: string;
+  previousTaskId: string | null;
+  nextTaskId: string | null;
+  isFirst: boolean;
+  seq?: number;
+}
+
+export interface FurnaceSchedule {
+  cabinetId: string;
+  firstTaskId: string | null;
+}
+
+export interface CabinetRuntime {
+  cabinetId: string;
+  status: RuntimeStatus;
+  activeLoadId?: string;
+  activeEntryLoadId?: string;
+  sterilizeStartedAt?: string;
+  sterilizeEta?: string;
+  updatedAt?: string;
+  source: RuntimeSource;
+}
+
+export interface EligibleDemandRow {
+  lineId: string;
+  placement: PlacementStatus;
+  otherCabinetId?: string;
+  line: StockLine;
+}
+
+export interface EligibleCabinetRow {
+  cabinetId: string;
+  runtime: RuntimeStatus;
+  selectable: boolean;
+  disabledReason?: string;
+  autoPackBlocked: boolean;
+  cabinet: Cabinet;
+}
+
+/**
+ * 组柜计划（正式名 CabinetContent）。
+ * 组柜阶段 date/shift/seq/task 均为空；仅甘特写回/建 Task。
+ */
+export interface CabinetContent {
   id: string;
   cabinetId: string;
-  date: string;
-  shift: Shift;
+  /** 组柜时 null；甘特写回。旧快照可仍为 string。 */
+  date: string | null;
+  /** 组柜时 null；甘特写回 */
+  shift: Shift | null;
+  seq?: number | null;
+  /** 扁平行 id，与 trays[].onTray 同步（一期兼容） */
   lines: string[];
+  trays?: TraysInCabinetContent[];
+  status?: ContentStatus;
+  scheduleStatus?: ScheduleStatus;
+  fillRate?: number;
+  loadComplete?: boolean;
+  editSource?: EditSource;
+  taskId?: string | null;
   hidden?: boolean;
   demoSeed?: boolean;
   /** 当前校验存在 error 且曾以手工模式落盘 */
   manualViolation?: boolean;
+  overrideNote?: string;
 }
+
+/** @deprecated 迁移别名 = CabinetContent */
+export type FurnaceRun = CabinetContent;
+/** @deprecated 迁移别名 = TraysInCabinetContent */
+export type Layer = TraysInCabinetContent;
+/** @deprecated 迁移别名 = StockLinesOnTray */
+export type OnLayer = StockLinesOnTray;
 
 export interface RuleFact {
   code: string;
@@ -196,6 +317,13 @@ export interface AppConfig {
   demo: { enableSeed: boolean };
   fp: { defaultHorizon: number };
   mix: { customer: 'warn' | 'forbid' | 'off' };
+  /** 装柜率分母：默认柜额定装载，不用日产能 */
+  fillRateDenom: 'ratedLoadM3' | 'dailyCapacityM3';
+  grouping: {
+    /** 自动组柜跳过已进其他柜（首版） */
+    skipInOtherCabinet: boolean;
+    defaultTrayCount: number;
+  };
 }
 
 export type LegacyConfigInput = Partial<AppConfig> & {
@@ -208,8 +336,14 @@ export interface PlanSnapshot {
   version?: number;
   date: string;
   shift: Shift;
+  /** 一期字段；与 contents 双写，读时优先 contents */
   furnaces: FurnaceRun[];
+  contents?: CabinetContent[];
+  tasks?: CabinetTask[];
+  runtimes?: CabinetRuntime[];
+  schedules?: FurnaceSchedule[];
   nextFurnaceSeq: number;
+  nextTaskSeq?: number;
   virtualLines: StockLine[];
   config: LegacyConfigInput;
   planSeedVersion: number;
@@ -236,6 +370,11 @@ export const ISSUE_CODES = {
   PREHEAT_OVERLAP: 'PREHEAT_OVERLAP',
   CAB21: 'CAB21',
   PROC_PENDING: 'PROC_PENDING',
+  STERILIZING_LOCKED: 'STERILIZING_LOCKED',
+  LOAD_COMPLETE_BLOCK: 'LOAD_COMPLETE_BLOCK',
+  ACTIVE_CONTENT: 'ACTIVE_CONTENT',
+  QTY_EXCEEDED: 'QTY_EXCEEDED',
+  TRAY_REQUIRED: 'TRAY_REQUIRED',
 } as const;
 
 export type IssueCode = (typeof ISSUE_CODES)[keyof typeof ISSUE_CODES];

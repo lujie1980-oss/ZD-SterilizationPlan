@@ -1,6 +1,6 @@
 # 振德医疗 · 灭菌中心排产 MVP
 
-许昌灭菌中心 EO 自有柜：**待灭菌合格库存 → 日装炉 → 进炉多日甘特**。本仓库为 Vite + TypeScript SPA，对齐详细设计 v1.3 与原型交互。演示种子数据，无真实 SAP/WMS 后端。
+许昌灭菌中心 EO 自有柜：**待灭菌合格库存 → 组柜（未排）→ 进炉甘特写回上线日期**。本仓库为 Vite + TypeScript SPA，对齐领域模型 v1.1 与变更-1（上线日期解耦 + 组柜双入口）。演示种子数据，无真实 SAP/WMS 后端。
 
 ## 运行
 
@@ -21,21 +21,27 @@ VITE_ENABLE_DEMO_SEED=false npm run build
 
 ## 演示路径（验收）
 
-1. **日排产工作台**：选日期/白班 → 勾选可排行 → 添加灭菌柜炉次 → 分配到选中炉 → 运行校验。
-2. **建议拼炉**：将未分配 D002 装入柜 9（策略 `D002_CAB9_DEMO`）。
-3. **拆炉向导（场景 A / TC-SPLIT-02）**
-   1. 工作台选日期/白班，点「拆炉向导」（演示行 P004 带「需拆炉」）。
+1. **组柜（变更-1 主路径）**
+   1. 侧栏「组柜」默认进入。入口 **选柜 / 选需求**，无上线日期筛选、无白夜班切换。
+   2. **选柜**：点柜 9 → 完整可进列表分栏「已进本柜 / 还可排入 / 已进其他柜」；灭菌中柜（演示柜14）灰显禁用但仍可见。
+   3. 点「自动组柜」：可见分层（托盘主数据）→ 装柜；柜卡「未排」，`date/shift=null`，**不建 CabinetTask**。
+   4. **选需求**：单击行只查看可组柜列表（不勾选）；勾选框才进入多选批量。
+   5. 自动模式 error 不落盘；手工调整可违例。FactStrip / 自动|手工闸门（二期 A）仍在。
+2. **已排期浏览（过渡）**：原日排产工作台。顶部日期只过滤**已排期**结果，不作为组柜前置。
+3. **建议拼炉**：将未分配 D002 装入柜 9（策略 `D002_CAB9_DEMO`），结果为未排。
+4. **拆炉向导（场景 A / TC-SPLIT-02）**
+   1. 过渡页选日期/白班，点「拆炉向导」（演示行 P004 带「需拆炉」）。
    2. 确认拆为 A/B 并分配到目标柜。
    3. 工作台应出现炉次载荷 `P004-A` / `P004-B`。
    4. **硬刷新**（F5）。炉次 `*-A`/`*-B` 仍在；DevTools → Application → Local Storage → `zhende_sterilization_plan_v2` 含 `virtualLines`（`id`/`splitOf`）。
    5. 有拆炉会话时**不会**被演示稀疏重种清掉炉次。
-4. **进炉计划**：同步装炉结果 → 甘特分段条 → 点柜看顺序队列；视野 7/14/21。
-5. **校验中心 / 主数据**：错误跳转炉次；柜 21、亚澳、EO 通用带琥珀色「待确认」。
-6. **导出**：顶栏「导出日计划 CSV」（进炉页隐藏）；UTF-8 BOM。
-7. **D002 最低拼载（v1.2）**：工作台「D002 最低拼载 (m³)」改为 `30` 后立刻影响校验与建议拼炉目标。约 40m³ 的 D002 分到柜 9 → `D002_MIN` 按 **30** 判定；改回 `50` 后低于 50 再告警。正式字段 `config.minLoadM3ByProcess.D002`，旧字段 `d002MinLoadM3` 读入迁移。
-8. **二期 A · 池事实标注（REQ-2.1）**：工作台可排池与「待灭菌可排池」行内 **FactStrip**（交期临近/逾期、指定柜是/否+柜列表、适用规则芯片）。只读派生，不跑全量校验；点击打开说明抽屉，不代替校验中心。交期相对**工作台日期**。
-9. **二期 A · 双模式约束（REQ-2.5）**：工具栏「自动排产 | 手工调整」写入 `config.scheduleMode`（默认 `auto`，刷新不丢）。
-   - **自动排产**：分配 / 改柜 / 拆炉确认若 `sev==='error'` → **拒绝落盘**（toast）。
+5. **进炉计划**：同步装炉结果 → **才创建 CabinetTask 链**（prev/next/FirstTask/IsFirst）并写回 date/shift/seq → 甘特分段条。交期 `due` 不变。
+6. **校验中心 / 主数据**：错误跳转炉次；柜 21、亚澳、EO 通用带琥珀色「待确认」。灭菌柜页展示额定装载 `ratedLoadM3` 与托盘层数。
+7. **导出**：顶栏「导出日计划 CSV」（进炉页/组柜页隐藏）；UTF-8 BOM；**未排载荷默认不含**。
+8. **D002 最低拼载（v1.2）**：过渡页「D002 最低拼载 (m³)」改为 `30` 后立刻影响校验与建议拼炉目标。约 40m³ 的 D002 分到柜 9 → `D002_MIN` 按 **30** 判定；改回 `50` 后低于 50 再告警。正式字段 `config.minLoadM3ByProcess.D002`，旧字段 `d002MinLoadM3` 读入迁移。
+9. **二期 A · 池事实标注（REQ-2.1）**：组柜需求行、过渡页可排池与「待灭菌可排池」行内 **FactStrip**（交期临近/逾期、指定柜是/否+柜列表、适用规则芯片）。只读派生，不跑全量校验；点击打开说明抽屉，不代替校验中心。
+10. **二期 A · 双模式约束（REQ-2.5）**：组柜与过渡页「自动排产 | 手工调整」写入 `config.scheduleMode`（默认 `auto`，刷新不丢）。
+   - **自动排产**：分配 / 改柜 / 拆炉确认 / 自动组柜若 `sev==='error'` → **拒绝落盘**（toast）。
    - **手工调整**：允许 error 落盘；炉卡红条「手工违例」；校验中心强预警；「违例原因（建议填写）」写入 `config.overrideNotes[furnaceId]`，**空原因不阻断**。
    - **建议拼炉**无论 UI 模式，内部 `editSource='auto'`，有 error **整次回滚**。
    - 切回 auto 不清除已有炉次；含 error 的炉次标「需手工处理或改回合法」，新的自动写入仍禁止 error。
@@ -51,25 +57,33 @@ src/
     split-wizard.ts      # 拆炉虚拟行
     suggest-combine.ts   # D002 → 柜9 演示拼炉
     export-csv.ts        # 日计划 CSV
+    grouping.ts          # 双入口完整可进列表 / 自动组柜 / 装填完毕
+    cabinet-content.ts   # CabinetContent + TraysInCabinetContent + StockLinesOnTray
+    cabinet-task.ts      # 甘特才建 Task 链并写回 date/shift
+    cabinet-runtime.ts   # 柜运行态（与主数据分离）
     facts.ts             # 池行 FactStrip 派生（不跑全量校验）
     commit-gate.ts       # 双模式提交闸门（auto 拒 error / 建议拼炉强制 auto）
     pool.ts / dates.ts / min-load.ts  # 生效拼载（minLoadM3ByProcess）
   data/
-    seed-cabinets.ts / seed-processes.ts / seed-pool.ts / seed-boxspecs.ts
-    seed-demo-plan.ts
+    seed-cabinets.ts     # Cabinet + Tray 主数据（额定装载 / 一托盘一层）
+    seed-processes.ts / seed-pool.ts / seed-boxspecs.ts
+    seed-demo-plan.ts    # 未排组柜种子
     config-defaults.ts   # 全部阈值默认值（禁止 UI 魔法数）
   persistence/
-    plan-store-v2.ts     # localStorage zhende_sterilization_plan_v2
-  ui/                    # 7 页中文界面（对齐原型 IA）
+    plan-store-v2.ts     # localStorage zhende_sterilization_plan_v2（contents 双写 furnaces）
+  ui/                    # 中文界面（组柜双入口 + 过渡日排产）
 ```
 
-侧栏 7 页：`workbench` 日排产工作台 · `furnace-plan` 进炉计划 · `pool` 待灭菌可排池 · `cabinets` 灭菌柜 · `processes` 工艺与指定柜 · `boxspecs` 箱规 · `validation` 校验中心。
+侧栏：`grouping` 组柜（选柜/选需求）· `workbench` 已排期浏览（过渡）· `furnace-plan` 进炉计划 · `pool` 待灭菌可排池 · `cabinets` 灭菌柜 · `processes` 工艺与指定柜 · `boxspecs` 箱规 · `validation` 校验中心。
 
 ## 持久化（plan v2）
 
 - Key：`zhende_sterilization_plan_v2`（兼容读取 `…_v1` 且非稀疏时迁移）
-- 字段：`date` / `shift` / `furnaces`（含可选 `manualViolation`） / `nextFurnaceSeq` / **`virtualLines: StockLine[]`** / `config`（含 **`scheduleMode`**、可选 **`overrideNotes`**） / `planSeedVersion`
+- 字段：`date` / `shift` / `furnaces`（= `contents` 双写，含可选 `manualViolation`） / `contents` / `tasks` / `runtimes` / `schedules` / `nextFurnaceSeq` / **`virtualLines: StockLine[]`** / `config`（含 **`scheduleMode`**、可选 **`overrideNotes`**） / `planSeedVersion`
+- 组柜结构：`CabinetContent` → `TraysInCabinetContent`（必填 `trayId`）→ `StockLinesOnTray`；旧 `FurnaceRun`/`Layer`/`OnLayer` 仅为类型别名
+- 组柜阶段 `date`/`shift`/`taskId` 为 null；进炉同步写回并建 `CabinetTask` 链（prev/next/FirstTask/IsFirst）
 - 旧快照缺 `scheduleMode` 时缺省为 **`auto`**；切换模式不清除炉次
+- 旧快照皆有 date 时视为 **scheduled**（C1-08）
 - 拆炉确认时 upsert 虚拟行；load 时 merge 进可排池，保证 `poolById('P004-A')` 可解析
 - 稀疏判定（演示）：可见有载炉次 &lt; 5 或涉及柜数 &lt; 5 → 可重种
 - **例外**：存在 `virtualLines[]` 或炉次已挂 `*-A`/`*-B` 时视为拆炉会话，刷新/进炉同步都不得清炉次
@@ -100,6 +114,8 @@ src/
 | `export.blockOnError` | false | 有 error 仍可导出并 toast |
 | `demo.enableSeed` / `VITE_ENABLE_DEMO_SEED` | true | 生产请关闭 |
 | `fp.defaultHorizon` | 14 | 甘特默认视野 |
+| `fillRateDenom` | `ratedLoadM3` | 装柜率分母（不用日产能） |
+| `grouping.skipInOtherCabinet` | true | 自动组柜跳过已进其他柜 |
 | `storage.key` | `zhende_sterilization_plan_v2` | |
 
 解析天数在工艺主数据（D002=2 已确认；P006/P252/亚澳/EO通用 pending）。

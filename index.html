@@ -15,7 +15,20 @@
       </div>
       <nav class="nav">
         <div class="nav-group">排产</div>
-        <div class="nav-item active" data-page="workbench"><span class="icon">📅</span>日排产工作台</div>
+        <div class="nav-item active" data-page="grouping">
+          <span class="icon">🧩</span>
+          <span class="nav-item-text">
+            <span>组柜</span>
+            <span class="nav-sub">选柜 / 选需求 · 未排</span>
+          </span>
+        </div>
+        <div class="nav-item" data-page="workbench">
+          <span class="icon">📅</span>
+          <span class="nav-item-text">
+            <span>已排期浏览</span>
+            <span class="nav-sub">过渡 · 结果过滤</span>
+          </span>
+        </div>
         <div class="nav-item" data-page="furnace-plan">
           <span class="icon">🔥</span>
           <span class="nav-item-text">
@@ -39,16 +52,28 @@
 
     <div class="main">
       <header class="topbar">
-        <div class="topbar-title" id="topbarTitle">日排产工作台</div>
+        <div class="topbar-title" id="topbarTitle">组柜</div>
         <div class="topbar-actions">
+          <span class="hint" id="topDateHint" title="仅过滤已排期结果，不参与组柜">结果日</span>
+          <input class="input" type="date" id="topResultDate" value="2026-07-24" title="已排期结果过滤，不作为组柜前置" />
           <button class="btn" id="btnExport" type="button">导出日计划 CSV</button>
         </div>
       </header>
 
-      <section class="page active" id="page-workbench" style="min-height:0;flex:1;overflow:hidden">
+      <section class="page active" id="page-grouping" style="min-height:0;flex:1;overflow:hidden">
+        <div class="grp-toolbar" id="grpToolbar" data-testid="grouping-toolbar"></div>
+        <div id="grpModeBanner" class="strong-banner" style="display:none" role="alert"></div>
+        <div class="grp-body" id="grpBody"></div>
+      </section>
+
+      <section class="page" id="page-workbench" style="min-height:0;flex:1;overflow:hidden">
+        <div class="config-bar" style="margin-bottom:0">
+          <span class="tag tag-pending">过渡</span>
+          <span class="hint">组柜主路径已迁至侧栏「组柜」。本页日期/班次只过滤<strong>已排期</strong>结果，不作为组柜前置；未排载荷请到组柜查看。</span>
+        </div>
         <div class="wb-toolbar">
-          <span class="label">日期</span>
-          <input class="input" type="date" id="wbDate" value="2026-07-24" />
+          <span class="label">结果日</span>
+          <input class="input" type="date" id="wbDate" value="2026-07-24" title="仅过滤已排期炉次，不参与组柜" />
           <div class="shift-tabs" id="wbShiftTabs">
             <div class="shift-tab active" data-shift="白班">白班</div>
             <div class="shift-tab" data-shift="夜班">夜班</div>
@@ -205,9 +230,9 @@
             <table class="data">
               <thead>
                 <tr>
-                  <th>行号</th><th>工厂</th><th>车间</th><th>物料</th><th>REF</th><th>品名</th>
+                  <th>行号</th><th>销售订单</th><th>工厂</th><th>车间</th><th>物料</th><th>REF</th><th>品名</th>
                   <th>事实</th>
-                  <th>客户号</th><th>交期</th><th>工单</th><th>箱数</th><th>单箱体积</th><th>体积</th>
+                  <th>客户号</th><th>交期</th><th>工单</th><th>规格L×W×H</th><th>箱数</th><th>单箱体积</th><th>体积</th>
                   <th>生产批号</th><th>库存地点</th><th>库存状态</th><th>工艺</th><th>允许柜</th>
                 </tr>
               </thead>
@@ -227,7 +252,7 @@
             <table class="data">
               <thead>
                 <tr>
-                  <th>柜号</th><th>基地</th><th>日产能</th><th>状态</th><th>备注</th><th>关联工艺</th>
+                  <th>柜号</th><th>规范码</th><th>基地</th><th>额定装载</th><th>日产能</th><th>托盘层</th><th>状态</th><th>备注</th><th>关联工艺</th>
                 </tr>
               </thead>
               <tbody id="cabBody"></tbody>

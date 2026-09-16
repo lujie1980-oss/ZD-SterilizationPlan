@@ -48,4 +48,18 @@ describe('export-csv', () => {
     expect(body).toContain(',Y');
     expect(csv.rowCount).toBe(1);
   });
+
+  it('C1-02: unscheduled furnaces are omitted from the day plan CSV', () => {
+    const csv = buildDayPlanCsv({
+      date: '2026-07-24',
+      shift: '白班',
+      furnaces: [
+        { id: 'F1', cabinetId: '柜9', date: null, shift: null, lines: ['P001'] },
+        { id: 'F2', cabinetId: '柜9', date: '2026-07-24', shift: '白班', lines: ['P001'] },
+      ],
+      cabinets: CABINETS,
+      poolById: (id) => (id === 'P001' ? line : undefined),
+    });
+    expect(csv.rowCount).toBe(1);
+  });
 });
