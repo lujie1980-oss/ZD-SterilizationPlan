@@ -192,7 +192,7 @@ export function autoPackCabinet(opts: {
       issues: [
         {
           sev: 'error',
-          code: ISSUE_CODES.LOAD_COMPLETE_BLOCK,
+          code: ISSUE_CODES.REPACK_AFTER_LOAD_COMPLETE,
           msg: `${opts.cabinetId} 装填完毕待入炉，自动禁再拼`,
           cabinetId: opts.cabinetId,
         },

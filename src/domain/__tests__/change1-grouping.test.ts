@@ -456,21 +456,46 @@ describe('C1-28 超托盘（Tray.capacityM3）', () => {
     expect(c.fillRate).toBeCloseTo(poolById('P001')!.vol / cab.ratedLoadM3);
   });
 
-  it('托盘已装体积超过 capacityM3 时发出 TRAY_OVER 警告（非硬错误）', () => {
+  it('托盘已装体积超过 capacityM3 时发出 TRAY_OVERFLOW error', () => {
     const c = content({ id: 'CC1', cabinetId: '柜9', lines: ['P001'] });
     const tray = traysForCabinet('柜9')[0]!;
     expect(c.trays![0]!.vol).toBeGreaterThan(trayCapacityM3(tray));
     const issues = validateFurnace(c, groupingCtx([c]));
-    expect(issues.some((i) => i.code === 'TRAY_OVER' && i.sev === 'warning' && i.msg.includes('超托盘'))).toBe(true);
-    expect(issues.some((i) => i.code === 'TRAY_OVER' && i.sev === 'error')).toBe(false);
+    expect(issues.some((i) => i.code === 'TRAY_OVERFLOW' && i.sev === 'error' && i.msg.includes('超托盘'))).toBe(true);
   });
 
-  it('未超托盘容积不发 TRAY_OVER', () => {
+  it('未超托盘容积不发 TRAY_OVERFLOW', () => {
     const c = content({ id: 'CC1', cabinetId: '柜9', lines: ['P003'] });
     const cap = trayCapacityM3(traysForCabinet('柜9')[0]!);
     expect(c.trays![0]!.vol).toBeLessThanOrEqual(cap);
     const issues = validateFurnace(c, groupingCtx([c]));
-    expect(issues.some((i) => i.code === 'TRAY_OVER')).toBe(false);
+    expect(issues.some((i) => i.code === 'TRAY_OVERFLOW')).toBe(false);
+  });
+
+  it('auto 闸门对 TRAY_OVERFLOW 拒绝落盘；manual 可落盘并标手工违例', () => {
+    const empty = content({ id: 'CC1', cabinetId: '柜9', lines: [] });
+    const over = content({ id: 'CC1', cabinetId: '柜9', lines: ['P001'] });
+    expect(validateFurnace(over, groupingCtx([over])).some((i) => i.code === 'TRAY_OVERFLOW' && i.sev === 'error')).toBe(true);
+    const autoDecision = decideCommit({
+      previous: [empty],
+      next: [over],
+      config: cfg,
+      ctx: groupingCtx([over]),
+      editSource: 'auto',
+    });
+    expect(autoDecision.aborted).toBe(true);
+    expect(autoDecision.issues.some((i) => i.code === 'TRAY_OVERFLOW')).toBe(true);
+    expect(autoDecision.persisted[0]!.lines).toEqual([]);
+    const manualDecision = decideCommit({
+      previous: [empty],
+      next: [over],
+      config: { ...cfg, scheduleMode: 'manual' },
+      ctx: groupingCtx([over]),
+      editSource: 'manual',
+    });
+    expect(manualDecision.aborted).toBe(false);
+    expect(manualDecision.persisted[0]!.manualViolation).toBe(true);
+    expect(manualDecision.needsOverridePrompt).toBe(true);
   });
 });
 
@@ -508,7 +533,7 @@ describe('C1-31 装填完毕后再拼', () => {
       poolById,
     });
     expect(packed.ok).toBe(false);
-    expect(packed.issues.some((i) => i.code === 'LOAD_COMPLETE_BLOCK' && i.sev === 'error')).toBe(true);
+    expect(packed.issues.some((i) => i.code === 'REPACK_AFTER_LOAD_COMPLETE' && i.sev === 'error')).toBe(true);
 
     const attempted = content({ id: 'CC1', cabinetId: '柜9', lines: ['P001', 'P002'], loadComplete: true });
     const decision = decideCommit({
@@ -522,7 +547,7 @@ describe('C1-31 装填完毕后再拼', () => {
     expect(decision.persisted[0]!.lines).toEqual(['P001']);
   });
 
-  it('manual：允许再拼但 LOAD_COMPLETE_BLOCK 强预警并标手工违例', () => {
+  it('manual：允许再拼但 REPACK_AFTER_LOAD_COMPLETE 强预警并标手工违例', () => {
     const loaded = content({ id: 'CC1', cabinetId: '柜9', lines: ['P001'], loadComplete: true });
     const runtimes = deriveAllRuntimes(CABINETS, [loaded], []);
     const packed = manualPackCabinet({
@@ -549,7 +574,7 @@ describe('C1-31 装填完毕后再拼', () => {
       editSource: 'manual',
     });
     expect(decision.aborted).toBe(false);
-    expect(decision.issues.some((i) => i.code === 'LOAD_COMPLETE_BLOCK' && i.sev === 'error')).toBe(true);
+    expect(decision.issues.some((i) => i.code === 'REPACK_AFTER_LOAD_COMPLETE' && i.sev === 'error')).toBe(true);
     expect(decision.persisted.find((c) => c.id === packed.content!.id)?.manualViolation).toBe(true);
     expect(decision.needsOverridePrompt).toBe(true);
   });
@@ -566,7 +591,7 @@ describe('C1-40 OnTray 分量不得超过 StockLine 剩余可排量', () => {
     expect(remainingBoxes(p001, [flat])).toBe(0);
   });
 
-  it('单柜 OnTray 箱数/体积超过本行总量 → QTY_EXCEEDED error', () => {
+  it('单柜 OnTray 箱数/体积超过本行总量 → ON_TRAY_QTY_OVERFLOW error', () => {
     const p001 = poolById('P001')!;
     const over = onTrayShare({
       id: 'CC1',
@@ -576,20 +601,20 @@ describe('C1-40 OnTray 分量不得超过 StockLine 剩余可排量', () => {
       vol: p001.vol + 5,
     });
     const issues = validateFurnace(over, groupingCtx([over]));
-    expect(issues.some((i) => i.code === 'QTY_EXCEEDED' && i.sev === 'error' && i.lineId === 'P001')).toBe(true);
+    expect(issues.some((i) => i.code === 'ON_TRAY_QTY_OVERFLOW' && i.sev === 'error' && i.lineId === 'P001')).toBe(true);
   });
 
-  it('跨柜已占用后剩余不足 → QTY_EXCEEDED；未超量不报', () => {
+  it('跨柜已占用后剩余不足 → ON_TRAY_QTY_OVERFLOW；未超量不报', () => {
     const p001 = poolById('P001')!;
     const other = onTrayShare({ id: 'CC2', cabinetId: '柜20', stockLineId: 'P001', boxes: 200, vol: 20 });
     const extra = onTrayShare({ id: 'CC1', cabinetId: '柜9', stockLineId: 'P001', boxes: 100, vol: 10 });
     expect(remainingBoxes(p001, [other])).toBe(p001.boxes - 200);
-    expect(validateFurnace(extra, groupingCtx([other, extra])).some((i) => i.code === 'QTY_EXCEEDED')).toBe(true);
+    expect(validateFurnace(extra, groupingCtx([other, extra])).some((i) => i.code === 'ON_TRAY_QTY_OVERFLOW')).toBe(true);
     const ok = onTrayShare({ id: 'CC1', cabinetId: '柜9', stockLineId: 'P001', boxes: 80, vol: 8 });
-    expect(validateFurnace(ok, groupingCtx([other, ok])).some((i) => i.code === 'QTY_EXCEEDED')).toBe(false);
+    expect(validateFurnace(ok, groupingCtx([other, ok])).some((i) => i.code === 'ON_TRAY_QTY_OVERFLOW')).toBe(false);
   });
 
-  it('auto 闸门对 QTY_EXCEEDED 拒绝落盘', () => {
+  it('auto 闸门对 ON_TRAY_QTY_OVERFLOW 拒绝落盘', () => {
     const p001 = poolById('P001')!;
     const empty = content({ id: 'CC1', cabinetId: '柜9', lines: [] });
     const over = onTrayShare({
@@ -607,7 +632,7 @@ describe('C1-40 OnTray 分量不得超过 StockLine 剩余可排量', () => {
       editSource: 'auto',
     });
     expect(decision.aborted).toBe(true);
-    expect(decision.issues.some((i) => i.code === 'QTY_EXCEEDED')).toBe(true);
+    expect(decision.issues.some((i) => i.code === 'ON_TRAY_QTY_OVERFLOW')).toBe(true);
     expect(decision.persisted[0]!.lines).toEqual([]);
   });
 });

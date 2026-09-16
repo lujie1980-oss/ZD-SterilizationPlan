@@ -289,7 +289,7 @@ function syncFurnacePlan(opts?: { silent?: boolean }): void {
   }
 }
 
-const GROUPING_ISSUE_CODES = new Set(['LOAD_COMPLETE_BLOCK', 'QTY_EXCEEDED', 'TRAY_OVER']);
+const GROUPING_ISSUE_CODES = new Set(['REPACK_AFTER_LOAD_COMPLETE', 'ON_TRAY_QTY_OVERFLOW', 'TRAY_OVERFLOW']);
 
 function collectIssues(): ValidationIssue[] {
   const scheduled = currentFurnaces(state.furnaces, state.date, state.shift);
@@ -965,12 +965,14 @@ function renderGroupingModeBanner(): void {
     return;
   }
   const content = cabId ? state.furnaces.find((f) => f.cabinetId === cabId && !f.hidden) : undefined;
-  const qty = content
-    ? validateFurnace(content, ruleCtx(state.furnaces)).find((i) => i.code === 'QTY_EXCEEDED')
+  const hard = content
+    ? validateFurnace(content, ruleCtx(state.furnaces)).find(
+        (i) => i.sev === 'error' && GROUPING_ISSUE_CODES.has(i.code),
+      )
     : undefined;
-  if (qty) {
-    el.className = 'strong-banner danger';
-    el.innerHTML = escapeHtml(qty.msg);
+  if (hard) {
+    el.className = scheduleMode() === 'manual' ? 'strong-banner danger' : 'strong-banner warn';
+    el.innerHTML = escapeHtml(hard.msg);
     el.style.display = '';
     return;
   }

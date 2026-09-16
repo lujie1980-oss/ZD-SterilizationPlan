@@ -41,6 +41,6 @@ describe('变更-1 组柜 UI 契约 (C1-11/19/22)', () => {
     expect(groupingRuntimeTagsHtml('idle')).toContain('空闲');
     expect(groupingLoadCompleteBannerHtml('auto')).toMatch(/自动禁止再拼/);
     expect(groupingLoadCompleteBannerHtml('manual')).toMatch(/强预警/);
-    expect(groupingLoadCompleteBannerHtml('manual')).toContain('LOAD_COMPLETE_BLOCK');
+    expect(groupingLoadCompleteBannerHtml('manual')).toContain('REPACK_AFTER_LOAD_COMPLETE');
   });
 });

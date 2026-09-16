@@ -153,7 +153,7 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
   if (f.loadComplete || loadCompleteRuntime) {
     issues.push({
       sev: 'error',
-      code: ISSUE_CODES.LOAD_COMPLETE_BLOCK,
+      code: ISSUE_CODES.REPACK_AFTER_LOAD_COMPLETE,
       msg: `${f.cabinetId} 装填完毕待入炉：自动禁止再拼（拒绝落盘）；手工再拼须强预警。待入炉不当空闲`,
       furnaceId: f.id,
       cabinetId: f.cabinetId,
@@ -166,8 +166,8 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
       const cap = trayCapacityM3(md);
       if (isTrayOver(tray.vol, cap)) {
         issues.push({
-          sev: 'warning',
-          code: ISSUE_CODES.TRAY_OVER,
+          sev: 'error',
+          code: ISSUE_CODES.TRAY_OVERFLOW,
           msg: `${md?.displayName || tray.trayId} 超托盘：已装 ${tray.vol.toFixed(1)}m³ > 托盘容积 ${cap}m³`,
           furnaceId: f.id,
           cabinetId: f.cabinetId,
@@ -193,7 +193,7 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
         if (usedBoxes > line.boxes || usedVol > line.vol + 1e-6) {
           issues.push({
             sev: 'error',
-            code: ISSUE_CODES.QTY_EXCEEDED,
+            code: ISSUE_CODES.ON_TRAY_QTY_OVERFLOW,
             msg: `${line.id} OnTray 分量超量：箱 ${share.boxes}+已占用${otherBoxes}/${line.boxes}，体积 ${share.vol.toFixed(1)}+已占用${otherVol.toFixed(1)}/${line.vol}`,
             furnaceId: f.id,
             lineId: line.id,

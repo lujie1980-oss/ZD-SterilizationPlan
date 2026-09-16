@@ -62,7 +62,7 @@ export function groupingRuntimeTagsHtml(runtime: RuntimeStatus): string {
 
 export function groupingLoadCompleteBannerHtml(mode: ScheduleMode): string {
   if (mode === 'manual') {
-    return '装填完毕待入炉：手工允许再拼，须强预警（红条 / 校验中心 LOAD_COMPLETE_BLOCK）。待入炉不当空闲。';
+    return '装填完毕待入炉：手工允许再拼，须强预警（红条 / 校验中心 REPACK_AFTER_LOAD_COMPLETE）。待入炉不当空闲。';
   }
   return '装填完毕待入炉：自动禁止再拼（拒绝落盘）。待入炉不当空闲。';
 }

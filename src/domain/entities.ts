@@ -358,7 +358,7 @@ export interface RuleContext {
   poolById: (id: string) => StockLine | undefined;
   config: AppConfig;
   sameShiftFurnaces: FurnaceRun[];
-  /** 托盘主数据；缺省时跳过 TRAY_OVER */
+  /** 托盘主数据；缺省时跳过 TRAY_OVERFLOW */
   trayMaster?: Tray[];
   /** 全量组柜计划（含未排）；缺省回退 sameShiftFurnaces，用于 OnTray 剩余量 */
   allContents?: CabinetContent[];
@@ -379,11 +379,11 @@ export const ISSUE_CODES = {
   CAB21: 'CAB21',
   PROC_PENDING: 'PROC_PENDING',
   STERILIZING_LOCKED: 'STERILIZING_LOCKED',
-  LOAD_COMPLETE_BLOCK: 'LOAD_COMPLETE_BLOCK',
+  REPACK_AFTER_LOAD_COMPLETE: 'REPACK_AFTER_LOAD_COMPLETE',
   ACTIVE_CONTENT: 'ACTIVE_CONTENT',
-  QTY_EXCEEDED: 'QTY_EXCEEDED',
+  ON_TRAY_QTY_OVERFLOW: 'ON_TRAY_QTY_OVERFLOW',
   TRAY_REQUIRED: 'TRAY_REQUIRED',
-  TRAY_OVER: 'TRAY_OVER',
+  TRAY_OVERFLOW: 'TRAY_OVERFLOW',
 } as const;
 
 export type IssueCode = (typeof ISSUE_CODES)[keyof typeof ISSUE_CODES];
