@@ -9,15 +9,34 @@ import {
   mergeConfig,
   persistableConfig,
 } from '../data/config-defaults';
-import type { AppConfig, FurnaceRun, PlanSnapshot, Shift, StockLine } from '../domain/entities';
-import { isPlanSparse } from '../domain/pool';
+import { CABINETS, TRAYS } from '../data/seed-cabinets';
+import { createSeedPool } from '../data/seed-pool';
+import { normalizeCabinetContent } from '../domain/cabinet-content';
+import { demoRuntimeOverrides, deriveAllRuntimes } from '../domain/cabinet-runtime';
+import type {
+  AppConfig,
+  CabinetContent,
+  CabinetRuntime,
+  CabinetTask,
+  FurnaceRun,
+  FurnaceSchedule,
+  PlanSnapshot,
+  Shift,
+  StockLine,
+} from '../domain/entities';
+import { isPlanSparse, lookupPool, mergeVirtualLinesIntoPool } from '../domain/pool';
 import { ensureSplitFurnaces } from '../domain/split-wizard';
 
 export interface LoadedPlan {
   date: string;
   shift: Shift;
   furnaces: FurnaceRun[];
+  contents?: CabinetContent[];
+  tasks?: CabinetTask[];
+  runtimes?: CabinetRuntime[];
+  schedules?: FurnaceSchedule[];
   nextFurnaceSeq: number;
+  nextTaskSeq?: number;
   virtualLines: StockLine[];
   config: AppConfig;
   planSeedVersion: number;
@@ -48,13 +67,49 @@ function removeItem(key: string): void {
   }
 }
 
+function poolLookup(virtualLines: StockLine[]): (id: string) => StockLine | undefined {
+  const pool = mergeVirtualLinesIntoPool(createSeedPool(), virtualLines);
+  return (id) => lookupPool(pool, virtualLines, id);
+}
+
+export function migrateContents(
+  rawFurnaces: FurnaceRun[],
+  rawContents: CabinetContent[] | undefined,
+  virtualLines: StockLine[],
+  config: AppConfig,
+): CabinetContent[] {
+  const source = Array.isArray(rawContents) && rawContents.length ? rawContents : rawFurnaces;
+  const poolById = poolLookup(virtualLines);
+  return (source || []).map((f) =>
+    normalizeCabinetContent(
+      {
+        ...f,
+        date: f.date ?? null,
+        shift: f.shift ?? null,
+      },
+      {
+        trayMaster: TRAYS,
+        poolById,
+        largeBoxVol: config.box.largeBoxVol,
+        cabinet: CABINETS.find((c) => c.id === f.cabinetId),
+      },
+    ),
+  );
+}
+
 export function serializePlan(plan: LoadedPlan): PlanSnapshot {
+  const contents = plan.contents?.length ? plan.contents : plan.furnaces;
   return {
     version: PLAN_SEED_VERSION,
     date: plan.date,
     shift: plan.shift,
-    furnaces: plan.furnaces,
+    furnaces: contents,
+    contents,
+    tasks: plan.tasks || [],
+    runtimes: plan.runtimes || [],
+    schedules: plan.schedules || [],
     nextFurnaceSeq: plan.nextFurnaceSeq,
+    nextTaskSeq: plan.nextTaskSeq || 1,
     virtualLines: plan.virtualLines,
     config: persistableConfig(plan.config),
     planSeedVersion: plan.planSeedVersion,
@@ -80,7 +135,12 @@ export function loadPlan(): LoadedPlan {
     date: '2026-07-24',
     shift: '白班',
     furnaces: [],
+    contents: [],
+    tasks: [],
+    runtimes: demoRuntimeOverrides(),
+    schedules: [],
     nextFurnaceSeq: 1,
+    nextTaskSeq: 1,
     virtualLines: [],
     config: defaultAppConfig(),
     planSeedVersion: 0,
@@ -105,26 +165,42 @@ export function loadPlan(): LoadedPlan {
   const data = parseSnapshot(raw);
   if (!data) return fallback;
 
+  const config = mergeConfig(data.config as Partial<AppConfig>);
+  const virtualLines = Array.isArray(data.virtualLines) ? data.virtualLines : [];
+  let furnaces = migrateContents(Array.isArray(data.furnaces) ? data.furnaces : [], data.contents, virtualLines, config);
+
   const plan: LoadedPlan = {
     date: data.date || fallback.date,
     shift: (data.shift as Shift) || fallback.shift,
-    furnaces: Array.isArray(data.furnaces) ? data.furnaces : [],
+    furnaces,
+    contents: furnaces,
+    tasks: Array.isArray(data.tasks) ? data.tasks : [],
+    runtimes: Array.isArray(data.runtimes) && data.runtimes.length ? data.runtimes : demoRuntimeOverrides(),
+    schedules: Array.isArray(data.schedules) ? data.schedules : [],
     nextFurnaceSeq: data.nextFurnaceSeq || 1,
-    virtualLines: Array.isArray(data.virtualLines) ? data.virtualLines : [],
-    config: mergeConfig(data.config as Partial<AppConfig>),
+    nextTaskSeq: data.nextTaskSeq || 1,
+    virtualLines,
+    config,
     planSeedVersion: data.planSeedVersion ?? data.version ?? 0,
     sparseWiped: false,
   };
 
   if (plan.virtualLines.length) {
     const restored = ensureSplitFurnaces(plan.furnaces, plan.virtualLines, plan.nextFurnaceSeq);
-    plan.furnaces = restored.furnaces;
+    plan.furnaces = migrateContents(restored.furnaces, undefined, plan.virtualLines, plan.config);
+    plan.contents = plan.furnaces;
     plan.nextFurnaceSeq = restored.nextSeq;
   }
 
+  plan.runtimes = deriveAllRuntimes(CABINETS, plan.contents || plan.furnaces, plan.runtimes || []);
+
   if (isDemoSeedEnabled(plan.config) && isPlanSparse(plan.furnaces, DEMO_MIN_LOADS, DEMO_MIN_CABINETS, plan.virtualLines)) {
     plan.furnaces = [];
+    plan.contents = [];
+    plan.tasks = [];
+    plan.schedules = [];
     plan.nextFurnaceSeq = 1;
+    plan.nextTaskSeq = 1;
     plan.planSeedVersion = 0;
     plan.sparseWiped = true;
   } else if (fromLegacy) {

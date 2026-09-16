@@ -38,14 +38,20 @@ export function suggestCombineD002Cab9(opts: {
   let furnaces = opts.furnaces.slice();
   let nextSeq = opts.nextSeq;
   let created = false;
-  let f = furnaces.find((x) => x.cabinetId === '柜9' && x.date === opts.date && x.shift === opts.shift && !x.hidden);
+  let f = furnaces.find((x) => x.cabinetId === '柜9' && !x.hidden && (x.date == null || (x.date === opts.date && x.shift === opts.shift)));
   if (!f) {
     f = {
       id: `F${nextSeq++}`,
       cabinetId: '柜9',
-      shift: opts.shift,
-      date: opts.date,
+      shift: null,
+      date: null,
       lines: [],
+      status: 'active',
+      scheduleStatus: 'unscheduled',
+      fillRate: 0,
+      loadComplete: false,
+      taskId: null,
+      seq: null,
     };
     furnaces.push(f);
     created = true;

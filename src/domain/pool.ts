@@ -35,6 +35,15 @@ export function currentFurnaces(furnaces: FurnaceRun[], date: string, shift: str
   return furnaces.filter((f) => f.date === date && f.shift === shift && !f.hidden);
 }
 
+/** 组柜主路径：未排载荷（date/shift 为空），不按日×班过滤 */
+export function unscheduledContents(furnaces: FurnaceRun[]): FurnaceRun[] {
+  return furnaces.filter((f) => !f.hidden && (f.date == null || f.shift == null || f.scheduleStatus === 'unscheduled'));
+}
+
+export function scheduledContents(furnaces: FurnaceRun[]): FurnaceRun[] {
+  return furnaces.filter((f) => !f.hidden && Boolean(f.date) && Boolean(f.shift));
+}
+
 /** 单行是否需拆：超体积、或该行自身大箱箱数已超每炉大箱上限。 */
 export function needsSplit(line: StockLine, cfg: AppConfig): boolean {
   return Boolean(

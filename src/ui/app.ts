@@ -6,15 +6,38 @@ import {
   isDemoSeedEnabled,
 } from '../data/config-defaults';
 import { BOX_SPEC_CONCEPT_COUNT, BOX_SPECS } from '../data/seed-boxspecs';
-import { CABINETS, cabinetById, usableCabinets } from '../data/seed-cabinets';
+import { CABINETS, TRAYS, cabinetById, traysForCabinet, usableCabinets } from '../data/seed-cabinets';
 import { getDemoFurnaceSeed } from '../data/seed-demo-plan';
 import { createSeedPool } from '../data/seed-pool';
 import { PROCESSES } from '../data/seed-processes';
+import { normalizeCabinetContent, trayCapacityM3 } from '../domain/cabinet-content';
+import { demoRuntimeOverrides, deriveAllRuntimes } from '../domain/cabinet-runtime';
+import { applyGanttSchedule } from '../domain/cabinet-task';
 import { addDays, dayOffset, fmtDate, fmtDateTime } from '../domain/dates';
-import type { AppConfig, EntryLoad, FurnaceRun, Shift, StockLine, ValidationIssue } from '../domain/entities';
+import type {
+  AppConfig,
+  CabinetTask,
+  EntryLoad,
+  FurnaceRun,
+  FurnaceSchedule,
+  GroupingEntry,
+  Shift,
+  StockLine,
+  ValidationIssue,
+} from '../domain/entities';
 import { buildEntryLoads } from '../domain/entry-scheduler';
 import { buildDayPlanCsv } from '../domain/export-csv';
 import { deriveFacts } from '../domain/facts';
+import {
+  autoPackCabinet,
+  focusDemand,
+  listCandidateCabinets,
+  listEligibleForCabinet,
+  markLoadComplete,
+  manualPackCabinet,
+  replaceCabinetActive,
+  toggleDemandCheck,
+} from '../domain/grouping';
 import {
   applyAssign,
   applyChangeCabinet,
@@ -35,6 +58,7 @@ import {
   isPlanSparse,
   mergeVirtualLinesIntoPool,
   needsSplit,
+  unscheduledContents,
   upsertVirtualLine,
   visibleUnassignedPool,
 } from '../domain/pool';
@@ -42,8 +66,15 @@ import { canAddFurnace, validateAll, validateFurnace } from '../domain/rule-engi
 import { applySplit, findSplitTarget } from '../domain/split-wizard';
 import { loadPlan, savePlan, type LoadedPlan } from '../persistence/plan-store-v2';
 import { $, $$, $opt, escapeHtml, toast } from './dom';
+import {
+  groupingLoadCompleteBannerHtml,
+  groupingRuntimeTagsHtml,
+  groupingToolbarContractHtml,
+  placementChip,
+  trayOverChip,
+} from './grouping-view';
 
-type Page = 'workbench' | 'furnace-plan' | 'pool' | 'cabinets' | 'processes' | 'boxspecs' | 'validation';
+type Page = 'grouping' | 'workbench' | 'furnace-plan' | 'pool' | 'cabinets' | 'processes' | 'boxspecs' | 'validation';
 
 interface UiState {
   page: Page;
@@ -65,10 +96,19 @@ interface UiState {
   planSeedVersion: number;
   pool: StockLine[];
   valFilter: IssueFilter;
+  grpEntry: GroupingEntry;
+  grpSelectedCabinetId: string | null;
+  grpFocusedDemandId: string | null;
+  grpCheckedDemandIds: Set<string>;
+  grpLayerHint: boolean;
+  tasks: CabinetTask[];
+  schedules: FurnaceSchedule[];
+  nextTaskSeq: number;
 }
 
 const PAGE_TITLES: Record<Page, string> = {
-  workbench: '日排产工作台',
+  grouping: '组柜 · 选柜 / 选需求',
+  workbench: '已排期浏览（过渡）',
   'furnace-plan': '进炉计划 · 工艺周期甘特',
   pool: '待灭菌可排池',
   cabinets: '主数据 · 灭菌柜',
@@ -84,7 +124,11 @@ function persist(): void {
     date: state.date,
     shift: state.shift,
     furnaces: state.furnaces,
+    contents: state.furnaces,
+    tasks: state.tasks,
+    schedules: state.schedules,
     nextFurnaceSeq: state.nextFurnaceSeq,
+    nextTaskSeq: state.nextTaskSeq,
     virtualLines: state.virtualLines,
     config: state.config,
     planSeedVersion: state.planSeedVersion,
@@ -104,6 +148,9 @@ function ruleCtx(sameShift = currentFurnaces(state.furnaces, state.date, state.s
     poolById: lookup,
     config: state.config,
     sameShiftFurnaces: sameShift,
+    trayMaster: TRAYS,
+    allContents: sameShift,
+    runtimes: deriveAllRuntimes(CABINETS, sameShift, demoRuntimeOverrides()),
   };
 }
 
@@ -162,14 +209,27 @@ function seedDemoFurnaceLoadsIfEmpty(): boolean {
   getDemoFurnaceSeed().forEach((d) => {
     const free = d.lines.filter((id) => poolById(id) && !assignedIds(state.furnaces).has(id));
     if (!free.length) return;
-    state.furnaces.push({
+    const raw: FurnaceRun = {
       id: `F${state.nextFurnaceSeq++}`,
       cabinetId: d.cabinetId,
-      shift: d.shift,
-      date: d.date,
+      shift: null,
+      date: null,
       lines: free,
       demoSeed: true,
-    });
+      scheduleStatus: 'unscheduled',
+      status: 'active',
+      loadComplete: false,
+      taskId: null,
+      seq: null,
+    };
+    state.furnaces.push(
+      normalizeCabinetContent(raw, {
+        trayMaster: TRAYS,
+        poolById,
+        largeBoxVol: state.config.box.largeBoxVol,
+        cabinet: cabinetById(d.cabinetId),
+      }),
+    );
   });
   state.planSeedVersion = PLAN_SEED_VERSION;
   persist();
@@ -179,6 +239,36 @@ function seedDemoFurnaceLoadsIfEmpty(): boolean {
 function syncFurnacePlan(opts?: { silent?: boolean }): void {
   if (!state.fpStartDate) state.fpStartDate = state.date || DEFAULT_DATE;
   const seeded = seedDemoFurnaceLoadsIfEmpty();
+  const scheduled = applyGanttSchedule({
+    contents: state.furnaces,
+    cabinets: CABINETS,
+    processes: PROCESSES,
+    config: state.config,
+    poolById,
+    trayMaster: TRAYS,
+    startDate: state.fpStartDate,
+    scheduleMode: scheduleMode(),
+    epoch: DEFAULT_DATE,
+    nextTaskSeq: state.nextTaskSeq,
+  });
+  if (scheduled.aborted) {
+    if (!opts?.silent) toast(scheduled.message, 'error');
+    const built = buildEntryLoads({
+      furnaces: state.furnaces,
+      cabinets: CABINETS,
+      processes: PROCESSES,
+      config: state.config,
+      poolById,
+      epoch: DEFAULT_DATE,
+    });
+    state.fpLoads = built.loads;
+    state.fpConflicts = built.conflicts;
+    return;
+  }
+  state.furnaces = scheduled.contents;
+  state.tasks = scheduled.tasks;
+  state.schedules = scheduled.schedules;
+  persist();
   const { loads, conflicts } = buildEntryLoads({
     furnaces: state.furnaces,
     cabinets: CABINETS,
@@ -192,17 +282,23 @@ function syncFurnacePlan(opts?: { silent?: boolean }): void {
   if (!opts?.silent) {
     toast(
       seeded
-        ? `已同步装炉结果（并写入演示炉次 ${state.fpLoads.length} 条）`
-        : `已同步装炉结果 · ${state.fpLoads.length} 条进炉载荷`,
-      seeded ? 'info' : 'success',
+        ? `已同步装炉结果（演示组柜 ${state.furnaces.filter((f) => !f.hidden).length} 柜）并写回上线日期`
+        : scheduled.message,
+      scheduled.issues.length ? 'warn' : 'success',
     );
   }
 }
 
+const GROUPING_ISSUE_CODES = new Set(['REPACK_AFTER_LOAD_COMPLETE', 'ON_TRAY_QTY_OVERFLOW', 'TRAY_OVERFLOW']);
+
 function collectIssues(): ValidationIssue[] {
-  const furns = currentFurnaces(state.furnaces, state.date, state.shift);
-  const furnaceIssues = collectFurnaceIssues(furns, ruleCtx(furns), scheduleMode());
-  return [...furnaceIssues, ...state.fpConflicts];
+  const scheduled = currentFurnaces(state.furnaces, state.date, state.shift);
+  const unsched = unscheduledContents(state.furnaces);
+  const scheduledIssues = collectFurnaceIssues(scheduled, ruleCtx(scheduled), scheduleMode());
+  const groupingIssues = collectFurnaceIssues(unsched, ruleCtx(unsched), scheduleMode()).filter((i) =>
+    GROUPING_ISSUE_CODES.has(i.code),
+  );
+  return [...scheduledIssues, ...groupingIssues, ...state.fpConflicts];
 }
 
 function factStripHtml(line: StockLine): string {
@@ -337,6 +433,9 @@ function renderModeBanner(): void {
 
 function navigate(page: Page): void {
   state.page = page;
+  if (page === 'grouping') {
+    seedDemoFurnaceLoadsIfEmpty();
+  }
   if (page === 'furnace-plan') {
     if (!state.fpStartDate) state.fpStartDate = state.date || DEFAULT_DATE;
     syncFurnacePlan({ silent: true });
@@ -344,7 +443,14 @@ function navigate(page: Page): void {
   $$('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.page === page));
   $$('.page').forEach((p) => p.classList.toggle('active', p.id === `page-${page}`));
   const exp = $opt('#btnExport');
-  if (exp) exp.style.display = page === 'furnace-plan' ? 'none' : '';
+  if (exp) exp.style.display = page === 'furnace-plan' || page === 'grouping' ? 'none' : '';
+  const topDate = $opt('#topResultDate');
+  const topHint = $opt('#topDateHint');
+  if (topDate) {
+    (topDate as HTMLInputElement).disabled = page === 'grouping';
+    topDate.style.display = page === 'grouping' ? 'none' : '';
+  }
+  if (topHint) topHint.style.display = page === 'grouping' ? 'none' : '';
   $('#topbarTitle').textContent = PAGE_TITLES[page] || page;
   render();
 }
@@ -619,8 +725,377 @@ function exportCSV(): void {
   toast(hasError ? '日计划 CSV 已下载（当前存在硬错误，请回工作台修正）' : '日计划 CSV 已下载', hasError ? 'warn' : 'success');
 }
 
+function currentRuntimes() {
+  return deriveAllRuntimes(CABINETS, state.furnaces, demoRuntimeOverrides());
+}
+
+function eligiblePool(): StockLine[] {
+  return state.pool.filter((p) => !p.splitOf);
+}
+
+function renderLayerStack(cabinetId: string | null): string {
+  if (!cabinetId) {
+    return `<div class="empty"><div class="hint">请选择灭菌柜或需求以查看分层 → 装柜</div></div>`;
+  }
+  const content = state.furnaces.find((f) => f.cabinetId === cabinetId && !f.hidden);
+  const cab = cabinetById(cabinetId);
+  const trays = traysForCabinet(cabinetId);
+  const fill = content?.fillRate ?? 0;
+  const unscheduled = !content?.date;
+  const steps = state.grpLayerHint
+    ? `<div class="grp-steps"><span class="tag tag-blue">① 分层</span> → <span class="tag tag-green">② 装柜</span></div>`
+    : `<div class="hint">组柜过程：先分层（托盘主数据）再装柜</div>`;
+  const layers = (content?.trays?.length ? content.trays : trays.map((t) => ({ trayId: t.id, level: t.level, vol: 0, boxes: 0, largeBoxes: 0, onTray: [] as never[], id: t.id, contentId: '' })))
+    .slice()
+    .sort((a, b) => b.level - a.level);
+  const cards = layers
+    .map((t) => {
+      const md = trays.find((x) => x.id === t.trayId);
+      const names = (t.onTray || []).map((o) => o.stockLineId).join('、') || '空层';
+      const cap = trayCapacityM3(md);
+      const overChip = trayOverChip(t.vol, cap);
+      const overCls = overChip ? ' tray-over' : '';
+      return `<div class="grp-layer${overCls}"${overChip ? ' data-tray-over="layer"' : ''}>
+        <div class="grp-layer-hd">${escapeHtml(md?.displayName || `第${t.level}层`)} · <span class="mono">${escapeHtml(t.trayId)}</span> ${overChip}</div>
+        <div class="grp-layer-bd">${escapeHtml(names)} · ${t.vol.toFixed(1)} m³ / 容积 ${cap || '—'} m³ · ${t.boxes}箱</div>
+      </div>`;
+    })
+    .join('');
+  return `${steps}
+    <div class="grp-cab-summary">
+      <strong>${escapeHtml(cab?.displayCode || cabinetId)}</strong>
+      ${unscheduled ? '<span class="tag tag-default">未排</span>' : `<span class="tag tag-blue">${escapeHtml(content?.date || '')} ${escapeHtml(content?.shift || '')}</span>`}
+      <div class="hint">装柜率 ${(fill * 100).toFixed(0)}% ＝ 已装体积 / 额定 ${cab?.ratedLoadM3 ?? '—'} m³</div>
+      <div class="progress-bar"><div class="fill ${fill >= 0.56 ? 'ok' : 'low'}" style="width:${Math.min(100, fill * 100)}%"></div></div>
+    </div>
+    <div class="grp-layers">${cards || '<div class="hint">尚无托盘装载</div>'}</div>`;
+}
+
+function runAutoPack(): void {
+  const runtimes = currentRuntimes();
+  if (state.grpEntry === 'cabinet') {
+    if (!state.grpSelectedCabinetId) {
+      toast('请先选择灭菌柜', 'warn');
+      return;
+    }
+    const packed = autoPackCabinet({
+      cabinetId: state.grpSelectedCabinetId,
+      pool: eligiblePool(),
+      contents: state.furnaces,
+      cabinets: CABINETS,
+      processes: PROCESSES,
+      trayMaster: TRAYS,
+      runtimes,
+      config: state.config,
+      nextId: `CC${state.nextFurnaceSeq++}`,
+      poolById,
+    });
+    if (!packed.ok || !packed.content) {
+      toast(packed.message, 'error');
+      return;
+    }
+    const replaced = replaceCabinetActive(state.furnaces, packed.content);
+    if (!replaced.ok) {
+      toast(replaced.issue?.msg || '无法写入', 'error');
+      return;
+    }
+    const decision = decideCommit({
+      previous: state.furnaces,
+      next: replaced.contents,
+      config: state.config,
+      ctx: ruleCtx(replaced.contents),
+      editSource: 'auto',
+    });
+    if (decision.aborted) {
+      toast(decision.message, 'error');
+      return;
+    }
+    state.furnaces = decision.persisted;
+    state.grpLayerHint = true;
+    persist();
+    render();
+    toast(packed.message);
+    return;
+  }
+  const ids = state.grpCheckedDemandIds.size ? [...state.grpCheckedDemandIds] : state.grpFocusedDemandId ? [state.grpFocusedDemandId] : [];
+  if (!ids.length) {
+    toast('请勾选需求后再自动组柜（单击行仅查看）', 'warn');
+    return;
+  }
+  const cabs = listCandidateCabinets({ lineIds: ids, poolById, cabinets: CABINETS, runtimes }).filter((r) => !r.autoPackBlocked);
+  const target = cabs[0];
+  if (!target) {
+    toast('没有可自动组入的柜（灭菌中/装填完毕已排除）', 'warn');
+    return;
+  }
+  const packed = autoPackCabinet({
+    cabinetId: target.cabinetId,
+    pool: eligiblePool(),
+    contents: state.furnaces,
+    cabinets: CABINETS,
+    processes: PROCESSES,
+    trayMaster: TRAYS,
+    runtimes,
+    config: state.config,
+    nextId: `CC${state.nextFurnaceSeq++}`,
+    poolById,
+    selectedLineIds: ids,
+  });
+  if (!packed.ok || !packed.content) {
+    toast(packed.message, 'error');
+    return;
+  }
+  const replaced = replaceCabinetActive(state.furnaces, packed.content);
+  if (!replaced.ok) {
+    toast(replaced.issue?.msg || '无法写入', 'error');
+    return;
+  }
+  const decision = decideCommit({
+    previous: state.furnaces,
+    next: replaced.contents,
+    config: state.config,
+    ctx: ruleCtx(replaced.contents),
+    editSource: 'auto',
+  });
+  if (decision.aborted) {
+    toast(decision.message, 'error');
+    return;
+  }
+  state.furnaces = decision.persisted;
+  state.grpSelectedCabinetId = target.cabinetId;
+  state.grpLayerHint = true;
+  persist();
+  render();
+  toast(packed.message);
+}
+
+function runManualPack(): void {
+  const runtimes = currentRuntimes();
+  let cabinetId = state.grpSelectedCabinetId;
+  const ids =
+    state.grpEntry === 'demand'
+      ? state.grpCheckedDemandIds.size
+        ? [...state.grpCheckedDemandIds]
+        : []
+      : [...state.grpCheckedDemandIds];
+  if (state.grpEntry === 'demand' && !cabinetId) {
+    toast('请先点选目标灭菌柜（查看行不会勾选需求）', 'warn');
+    return;
+  }
+  if (state.grpEntry === 'cabinet' && !cabinetId) {
+    toast('请先选择灭菌柜', 'warn');
+    return;
+  }
+  if (!ids.length) {
+    toast('请勾选要组入的需求（单击行仅查看）', 'warn');
+    return;
+  }
+  const packed = manualPackCabinet({
+    cabinetId: cabinetId!,
+    lineIds: ids,
+    contents: state.furnaces,
+    cabinets: CABINETS,
+    trayMaster: TRAYS,
+    runtimes,
+    config: state.config,
+    nextId: `CC${state.nextFurnaceSeq++}`,
+    poolById,
+    allowInOther: false,
+  });
+  if (!packed.ok || !packed.content) {
+    toast(packed.message, 'error');
+    return;
+  }
+  const replaced = replaceCabinetActive(state.furnaces, packed.content);
+  const next = replaced.ok ? replaced.contents : state.furnaces;
+  const decision = decideCommit({
+    previous: state.furnaces,
+    next,
+    config: state.config,
+    ctx: ruleCtx(next),
+    editSource: 'manual',
+  });
+  if (decision.aborted) {
+    toast(decision.message, 'error');
+    return;
+  }
+  state.furnaces = decision.persisted;
+  state.grpLayerHint = true;
+  persist();
+  render();
+  toast(packed.message, decision.needsOverridePrompt ? 'warn' : 'success');
+  if (decision.needsOverridePrompt) {
+    const viol = decision.persisted.find((x) => x.manualViolation);
+    if (viol) showOverridePrompt(viol.id, decision.issues);
+  }
+}
+
+function runMarkLoadComplete(): void {
+  const cabinetId = state.grpSelectedCabinetId;
+  if (!cabinetId) {
+    toast('请先选择灭菌柜', 'warn');
+    return;
+  }
+  const content = state.furnaces.find((f) => f.cabinetId === cabinetId && !f.hidden);
+  if (!content) {
+    toast('该柜尚无组柜载荷', 'warn');
+    return;
+  }
+  const issues = validateFurnace(content, ruleCtx(state.furnaces));
+  const marked = markLoadComplete({ content, issues, scheduleMode: scheduleMode() });
+  if (!marked.ok) {
+    toast(marked.message, 'error');
+    return;
+  }
+  state.furnaces = state.furnaces.map((f) => (f.id === content.id ? marked.content : f));
+  persist();
+  render();
+  toast(marked.message, marked.content.manualViolation ? 'warn' : 'success');
+}
+
+function renderGroupingModeBanner(): void {
+  const el = $opt('#grpModeBanner');
+  if (!el) return;
+  const cabId = state.grpSelectedCabinetId;
+  const rt = cabId ? currentRuntimes().find((r) => r.cabinetId === cabId) : undefined;
+  if (rt?.status === 'loadComplete') {
+    el.className = scheduleMode() === 'manual' ? 'strong-banner danger' : 'strong-banner warn';
+    el.innerHTML = groupingLoadCompleteBannerHtml(scheduleMode());
+    el.style.display = '';
+    return;
+  }
+  const content = cabId ? state.furnaces.find((f) => f.cabinetId === cabId && !f.hidden) : undefined;
+  const hard = content
+    ? validateFurnace(content, ruleCtx(state.furnaces)).find(
+        (i) => i.sev === 'error' && GROUPING_ISSUE_CODES.has(i.code),
+      )
+    : undefined;
+  if (hard) {
+    el.className = scheduleMode() === 'manual' ? 'strong-banner danger' : 'strong-banner warn';
+    el.innerHTML = escapeHtml(hard.msg);
+    el.style.display = '';
+    return;
+  }
+  el.style.display = 'none';
+  el.innerHTML = '';
+}
+
+function renderGrouping(): void {
+  const toolbar = $opt('#grpToolbar');
+  if (!toolbar) return;
+  toolbar.innerHTML = groupingToolbarContractHtml();
+  $$('#grpEntryTabs .shift-tab').forEach((t) => t.classList.toggle('active', t.dataset.grpEntry === state.grpEntry));
+  $$('#grpScheduleModeTabs .shift-tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === scheduleMode()));
+  renderGroupingModeBanner();
+
+  const runtimes = currentRuntimes();
+  const body = $('#grpBody');
+  if (state.grpEntry === 'cabinet') {
+    const cabId = state.grpSelectedCabinetId;
+    const rows = cabId
+      ? listEligibleForCabinet({
+          cabinetId: cabId,
+          pool: eligiblePool(),
+          contents: state.furnaces,
+          cabinets: CABINETS,
+          config: state.config,
+        })
+      : [];
+    const groups = {
+      inThisCabinet: rows.filter((r) => r.placement === 'inThisCabinet'),
+      unassigned: rows.filter((r) => r.placement === 'unassigned'),
+      inOtherCabinet: rows.filter((r) => r.placement === 'inOtherCabinet'),
+    };
+    const cabCards = usableCabinets()
+      .map((c) => {
+        const rt = runtimes.find((r) => r.cabinetId === c.id);
+        const status = rt?.status || 'idle';
+        const disabled = status === 'sterilizing' || status === 'outOfService';
+        const sel = cabId === c.id ? 'selected' : '';
+        const load = state.furnaces.find((f) => f.cabinetId === c.id && !f.hidden);
+        return `<div class="grp-cab ${sel} ${disabled ? 'disabled' : ''}" data-grp-cab="${escapeHtml(c.id)}">
+          <div class="fname">${escapeHtml(c.displayCode)} <span class="hint">${escapeHtml(c.canonicalId)}</span></div>
+          <div class="sub">${c.base}基地 · 额定 ${c.ratedLoadM3} m³</div>
+          <div>${groupingRuntimeTagsHtml(status)}
+            ${load ? `<span class="tag tag-green">${(load.fillRate || 0) * 100 | 0}%</span>` : ''}
+            ${load && !load.date ? '<span class="tag tag-default">未排</span>' : ''}
+          </div>
+        </div>`;
+      })
+      .join('');
+    const demandBlock = (title: string, list: typeof rows, emptyHint: string) => `
+      <div class="grp-part">
+        <div class="grp-part-hd">${escapeHtml(title)} · ${list.length}</div>
+        ${
+          list.length
+            ? list
+                .map((r) => {
+                  const checked = state.grpCheckedDemandIds.has(r.lineId) ? 'checked' : '';
+                  const facts = factStripHtml(r.line);
+                  return `<div class="grp-demand ${checked ? 'selected' : ''}" data-grp-demand-view="${escapeHtml(r.lineId)}">
+                    <input type="checkbox" data-grp-check="${escapeHtml(r.lineId)}" ${checked} ${r.placement === 'inOtherCabinet' ? 'disabled' : ''} />
+                    <div>
+                      <div><strong class="mono">${escapeHtml(r.lineId)}</strong> ${placementChip(r.placement, r.otherCabinetId)} ${escapeHtml(r.line.name)}</div>
+                      <div class="sub">${r.line.vol} m³ · SO ${escapeHtml(r.line.salesOrderNo || r.line.wo)} · ${r.line.dimL || '—'}×${r.line.dimW || '—'}×${r.line.dimH || '—'} · 交期 ${escapeHtml(r.line.due)}</div>
+                      ${facts}
+                    </div>
+                  </div>`;
+                })
+                .join('')
+            : `<div class="hint">${escapeHtml(emptyHint)}</div>`
+        }
+      </div>`;
+    const emptyUnassignedHint =
+      groups.inThisCabinet.length && !groups.unassigned.length ? '还可排入为空，柜并非空闲（见已进本柜）' : '暂无未排可进需求';
+    body.innerHTML = `<div class="grp-cols">
+      <div class="grp-col"><div class="grp-col-hd">选柜</div><div class="grp-scroll">${cabCards}</div></div>
+      <div class="grp-col"><div class="grp-col-hd">完整可进需求</div><div class="grp-scroll">
+        ${cabId ? demandBlock('已进本柜', groups.inThisCabinet, '本柜尚无载荷') + demandBlock('还可排入', groups.unassigned, emptyUnassignedHint) + demandBlock('已进其他柜', groups.inOtherCabinet, '无') : '<div class="empty"><div class="hint">请选择左侧灭菌柜</div></div>'}
+      </div></div>
+      <div class="grp-col"><div class="grp-col-hd">分层 → 装柜</div><div class="grp-scroll">${renderLayerStack(cabId)}</div></div>
+    </div>`;
+    return;
+  }
+
+  const demands = eligiblePool().filter((p) => p.stockStatus !== '限制');
+  const demandRows = demands
+    .map((p) => {
+      const checked = state.grpCheckedDemandIds.has(p.id) ? 'checked' : '';
+      const focused = state.grpFocusedDemandId === p.id ? 'focused' : '';
+      return `<div class="grp-demand ${focused} ${checked ? 'selected' : ''}" data-grp-demand-view="${escapeHtml(p.id)}">
+        <input type="checkbox" data-grp-check="${escapeHtml(p.id)}" ${checked} />
+        <div>
+          <div><strong class="mono">${escapeHtml(p.id)}</strong> ${escapeHtml(p.name)} ${p.urgent ? '<span class="tag tag-urgent">加急</span>' : ''}</div>
+          <div class="sub">${p.vol} m³ · SO ${escapeHtml(p.salesOrderNo || p.wo)} · ${p.dimL || '—'}×${p.dimW || '—'}×${p.dimH || '—'} · 允许 ${escapeHtml(p.allowed.join(','))}</div>
+          ${factStripHtml(p)}
+        </div>
+      </div>`;
+    })
+    .join('');
+  const viewIds = state.grpFocusedDemandId ? [state.grpFocusedDemandId] : [];
+  const cabRows = viewIds.length
+    ? listCandidateCabinets({ lineIds: viewIds, poolById, cabinets: CABINETS, runtimes })
+    : [];
+  const cabList = cabRows
+    .map((r) => {
+      const sel = state.grpSelectedCabinetId === r.cabinetId ? 'selected' : '';
+      return `<div class="grp-cab ${sel} ${r.selectable ? '' : 'disabled'}" data-grp-cab="${escapeHtml(r.cabinetId)}">
+        <div class="fname">${escapeHtml(r.cabinet.displayCode)}</div>
+        <div>${groupingRuntimeTagsHtml(r.runtime)}</div>
+        ${r.disabledReason ? `<div class="hint">${escapeHtml(r.disabledReason)}</div>` : ''}
+      </div>`;
+    })
+    .join('');
+  body.innerHTML = `<div class="grp-cols">
+    <div class="grp-col"><div class="grp-col-hd">选需求 · 单击查看 / 勾选批量</div><div class="grp-scroll">${demandRows}</div></div>
+    <div class="grp-col"><div class="grp-col-hd">可组柜（允许设备 ∩ 运行态）</div><div class="grp-scroll">${cabRows.length ? cabList : '<div class="empty"><div class="hint">单击左侧需求行查看可组柜（不会勾选）</div></div>'}</div></div>
+    <div class="grp-col"><div class="grp-col-hd">分层 → 装柜</div><div class="grp-scroll">${renderLayerStack(state.grpSelectedCabinetId)}</div></div>
+  </div>`;
+}
+
 function render(): void {
-  if (state.page === 'workbench') renderWorkbench();
+  if (state.page === 'grouping') renderGrouping();
+  else if (state.page === 'workbench') renderWorkbench();
   else if (state.page === 'furnace-plan') renderFurnacePlan();
   else if (state.page === 'pool') renderPool();
   else if (state.page === 'cabinets') renderCabinets();
@@ -816,6 +1291,7 @@ function renderPool(): void {
       (p) => `
       <tr>
         <td class="mono">${escapeHtml(p.id)}</td>
+        <td class="mono">${escapeHtml(p.salesOrderNo || p.wo)}</td>
         <td>${escapeHtml(p.factory)}</td>
         <td>${escapeHtml(p.workshop)}</td>
         <td>${escapeHtml(p.matType)}</td>
@@ -823,12 +1299,12 @@ function renderPool(): void {
         <td>${escapeHtml(p.name)} ${p.urgent ? '<span class="tag tag-urgent">加急</span>' : ''}
             ${p.suggest ? `<span class="tag tag-purple">${escapeHtml(p.suggest)}</span>` : ''}
             ${p.useCab21 ? pendingTag('含柜21') : ''}
-            ${p.splitOf ? '' : ''}
         </td>
         <td class="facts-cell">${factStripHtml(p)}</td>
         <td>${escapeHtml(p.customer)}</td>
         <td>${escapeHtml(p.due)}</td>
         <td class="mono">${escapeHtml(p.wo)}</td>
+        <td class="mono">${p.dimL ?? '—'}×${p.dimW ?? '—'}×${p.dimH ?? '—'}</td>
         <td>${p.boxes}</td>
         <td>${p.boxVol}</td>
         <td><strong>${p.vol}</strong></td>
@@ -849,9 +1325,12 @@ function renderCabinets(): void {
   $('#cabBody').innerHTML = CABINETS.map(
     (c) => `
       <tr>
-        <td><strong>${escapeHtml(c.id)}</strong></td>
+        <td><strong>${escapeHtml(c.displayCode)}</strong></td>
+        <td class="mono">${escapeHtml(c.canonicalId)}</td>
         <td>${c.base}基地</td>
+        <td>${c.ratedLoadM3} m³</td>
         <td>${c.capacity} m³</td>
+        <td>${traysForCabinet(c.id).length} 层</td>
         <td>${
           c.status === '可用'
             ? '<span class="tag tag-green">可用</span>'
@@ -1131,6 +1610,11 @@ function bind(): void {
     persist();
     render();
   });
+  $opt('#topResultDate')?.addEventListener('change', (e) => {
+    state.date = (e.target as HTMLInputElement).value;
+    persist();
+    render();
+  });
   $$('#wbShiftTabs .shift-tab').forEach((t) => {
     t.addEventListener('click', () => {
       state.shift = t.dataset.shift as Shift;
@@ -1254,11 +1738,68 @@ function bind(): void {
       if (cb.checked) state.selectedPool.add(id);
       else state.selectedPool.delete(id);
       renderWorkbench();
+      return;
+    }
+    const grpCheck = t.closest('[data-grp-check]') as HTMLInputElement | null;
+    if (grpCheck) {
+      const next = toggleDemandCheck(
+        { focusedId: state.grpFocusedDemandId, checkedIds: [...state.grpCheckedDemandIds] },
+        grpCheck.dataset.grpCheck!,
+        grpCheck.checked,
+      );
+      state.grpCheckedDemandIds = new Set(next.checkedIds);
+      renderGrouping();
     }
   });
 
   document.addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
+    const grpEntry = t.closest('[data-grp-entry]') as HTMLElement | null;
+    if (grpEntry?.dataset.grpEntry) {
+      state.grpEntry = grpEntry.dataset.grpEntry === 'demand' ? 'demand' : 'cabinet';
+      renderGrouping();
+      return;
+    }
+    if (t.id === 'btnAutoPack' || t.closest('#btnAutoPack')) {
+      runAutoPack();
+      return;
+    }
+    if (t.id === 'btnManualPack' || t.closest('#btnManualPack')) {
+      runManualPack();
+      return;
+    }
+    if (t.id === 'btnLoadComplete' || t.closest('#btnLoadComplete')) {
+      runMarkLoadComplete();
+      return;
+    }
+    const grpMode = t.closest('#grpScheduleModeTabs [data-mode]') as HTMLElement | null;
+    if (grpMode?.dataset.mode) {
+      setScheduleMode(grpMode.dataset.mode === 'manual' ? 'manual' : 'auto');
+      return;
+    }
+    const grpCab = t.closest('[data-grp-cab]') as HTMLElement | null;
+    if (grpCab?.dataset.grpCab) {
+      const id = grpCab.dataset.grpCab;
+      const rt = currentRuntimes().find((r) => r.cabinetId === id);
+      if (rt?.status === 'sterilizing') {
+        state.grpSelectedCabinetId = id;
+        renderGrouping();
+        toast('灭菌中：可查看但不可组柜', 'warn');
+        return;
+      }
+      state.grpSelectedCabinetId = id;
+      renderGrouping();
+      return;
+    }
+    const grpDemand = t.closest('[data-grp-demand-view]') as HTMLElement | null;
+    if (grpDemand && !t.closest('[data-grp-check]')) {
+      const id = grpDemand.dataset.grpDemandView!;
+      const next = focusDemand({ focusedId: state.grpFocusedDemandId, checkedIds: [...state.grpCheckedDemandIds] }, id);
+      state.grpFocusedDemandId = next.focusedId;
+      state.grpCheckedDemandIds = new Set(next.checkedIds);
+      renderGrouping();
+      return;
+    }
     const fact = t.closest('[data-fact-open]') as HTMLElement | null;
     if (fact?.dataset.factOpen) {
       e.preventDefault();
@@ -1350,13 +1891,25 @@ function bind(): void {
 export function bootApp(): void {
   const loaded = loadPlan();
   const pool = mergeVirtualLinesIntoPool(createSeedPool(), loaded.virtualLines);
+  const lookup = (id: string) => pool.find((p) => p.id === id) || loaded.virtualLines.find((p) => p.id === id);
+  const furnaces = (loaded.furnaces || []).map((f) =>
+    normalizeCabinetContent(
+      { ...f, date: f.date ?? null, shift: f.shift ?? null },
+      {
+        trayMaster: TRAYS,
+        poolById: lookup,
+        largeBoxVol: loaded.config.box.largeBoxVol,
+        cabinet: cabinetById(f.cabinetId),
+      },
+    ),
+  );
   state = {
-    page: 'workbench',
+    page: 'grouping',
     date: loaded.date,
     shift: loaded.shift,
     selectedPool: new Set(),
     selectedFurnaceId: null,
-    furnaces: loaded.furnaces,
+    furnaces,
     filters: { q: '', customer: '', process: '', urgentOnly: false },
     config: loaded.config,
     nextFurnaceSeq: loaded.nextFurnaceSeq,
@@ -1370,7 +1923,15 @@ export function bootApp(): void {
     planSeedVersion: loaded.planSeedVersion,
     pool,
     valFilter: 'all',
+    grpEntry: 'cabinet',
+    grpSelectedCabinetId: '柜9',
+    grpFocusedDemandId: null,
+    grpCheckedDemandIds: new Set(),
+    grpLayerHint: false,
+    tasks: loaded.tasks || [],
+    schedules: loaded.schedules || [],
+    nextTaskSeq: loaded.nextTaskSeq || 1,
   };
   bind();
-  navigate('workbench');
+  navigate('grouping');
 }

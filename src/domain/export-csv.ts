@@ -10,7 +10,7 @@ export function buildDayPlanCsv(opts: {
 }): { filename: string; content: string; rowCount: number } {
   const lines: string[] = [CSV_HEADERS.join(',')];
   opts.furnaces
-    .filter((f) => !f.hidden)
+    .filter((f) => !f.hidden && f.date === opts.date && f.shift === opts.shift)
     .forEach((f) => {
       const cab = opts.cabinets.find((c) => c.id === f.cabinetId);
       f.lines.forEach((lid) => {

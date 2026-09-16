@@ -91,6 +91,8 @@ export function defaultAppConfig(): AppConfig {
     demo: { enableSeed: true },
     fp: { defaultHorizon: 14 },
     mix: { customer: 'warn' },
+    fillRateDenom: 'ratedLoadM3',
+    grouping: { skipInOtherCabinet: true, defaultTrayCount: 4 },
   };
 }
 
@@ -120,6 +122,11 @@ export function mergeConfig(partial?: LegacyConfigInput | null): AppConfig {
     mix: { ...base.mix, ...(partial.mix ?? {}) },
     scheduleMode: partial.scheduleMode === 'manual' ? 'manual' : 'auto',
     overrideNotes: { ...(partial.overrideNotes ?? {}) },
+    fillRateDenom: partial.fillRateDenom === 'dailyCapacityM3' ? 'dailyCapacityM3' : 'ratedLoadM3',
+    grouping: {
+      skipInOtherCabinet: partial.grouping?.skipInOtherCabinet !== false,
+      defaultTrayCount: partial.grouping?.defaultTrayCount ?? base.grouping.defaultTrayCount,
+    },
   };
 }
 
@@ -138,6 +145,11 @@ export function persistableConfig(config: AppConfig): AppConfig {
     load: {
       defaultMinM3: config.load.defaultMinM3,
       loadMetric: config.load.loadMetric,
+    },
+    fillRateDenom: config.fillRateDenom === 'dailyCapacityM3' ? 'dailyCapacityM3' : 'ratedLoadM3',
+    grouping: {
+      skipInOtherCabinet: config.grouping?.skipInOtherCabinet !== false,
+      defaultTrayCount: config.grouping?.defaultTrayCount ?? 4,
     },
   };
 }

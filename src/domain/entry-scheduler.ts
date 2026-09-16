@@ -9,8 +9,12 @@ export function sortFurnaceRunsForEntry(
   poolById: (id: string) => StockLine | undefined,
 ): FurnaceRun[] {
   return list.slice().sort((a, b) => {
-    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-    if (shiftRank(a.shift) !== shiftRank(b.shift)) return shiftRank(a.shift) - shiftRank(b.shift);
+    const da = a.date || '9999-12-31';
+    const db = b.date || '9999-12-31';
+    if (da !== db) return da < db ? -1 : 1;
+    const sa = a.shift || '夜班';
+    const sb = b.shift || '夜班';
+    if (shiftRank(sa) !== shiftRank(sb)) return shiftRank(sa) - shiftRank(sb);
     const va = furnaceVol(a, poolById);
     const vb = furnaceVol(b, poolById);
     if (vb !== va) return vb - va;
@@ -20,14 +24,25 @@ export function sortFurnaceRunsForEntry(
 
 export function schedulePhases(run: FurnaceRun, processCode: string, cfg: AppConfig, processes: Process[]) {
   const aer = aerateInfo(processCode, processes);
+  const date = run.date;
+  const shift = run.shift;
+  if (!date || !shift) {
+    const fallbackStart = addDays('1970-01-01', 0);
+    return {
+      preheat: null,
+      sterilize: { start: fallbackStart, end: fallbackStart },
+      aerate: { start: fallbackStart, end: fallbackStart, days: aer.days, pending: aer.pending },
+      bi: { start: fallbackStart, end: fallbackStart },
+    };
+  }
   let sterilizeStart: Date;
   let preheat: { start: Date; end: Date } | null;
-  if (run.shift === '夜班') {
-    sterilizeStart = addDays(run.date, cfg.cycle.nightSterilizeOffsetDays);
-    preheat = { start: addDays(run.date, 0), end: sterilizeStart };
+  if (shift === '夜班') {
+    sterilizeStart = addDays(date, cfg.cycle.nightSterilizeOffsetDays);
+    preheat = { start: addDays(date, 0), end: sterilizeStart };
   } else {
-    preheat = { start: addDays(run.date, -cfg.cycle.preheatDays), end: addDays(run.date, 0) };
-    sterilizeStart = addDays(run.date, 0);
+    preheat = { start: addDays(date, -cfg.cycle.preheatDays), end: addDays(date, 0) };
+    sterilizeStart = addDays(date, 0);
   }
   const sterilizeEnd = addDays(sterilizeStart, cfg.cycle.sterilizeDays);
   const aerateEnd = addDays(sterilizeEnd, aer.days);
@@ -104,7 +119,7 @@ export function buildEntryLoads(opts: {
   epoch: string;
 }): { loads: EntryLoad[]; conflicts: ValidationIssue[] } {
   const { furnaces, cabinets, processes, config, poolById, epoch } = opts;
-  const visible = furnaces.filter((f) => !f.hidden && f.lines && f.lines.length);
+  const visible = furnaces.filter((f) => !f.hidden && f.lines && f.lines.length && f.date && f.shift);
   const byCab = new Map<string, FurnaceRun[]>();
   visible.forEach((f) => {
     if (!byCab.has(f.cabinetId)) byCab.set(f.cabinetId, []);
@@ -128,8 +143,8 @@ export function buildEntryLoads(opts: {
         furnaceId: f.id,
         cabinetId,
         seq: idx + 1,
-        date: f.date,
-        shift: f.shift,
+        date: f.date!,
+        shift: f.shift!,
         process,
         customer: customers[0] || '—',
         customers,

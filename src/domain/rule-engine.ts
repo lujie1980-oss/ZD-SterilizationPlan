@@ -1,3 +1,10 @@
+import {
+  isTrayOver,
+  occupiedBoxesOf,
+  occupiedVolOf,
+  onTrayShareOf,
+  trayCapacityM3,
+} from './cabinet-content';
 import { effectiveMinLoadM3 } from './min-load';
 import type { FurnaceRun, RuleContext, ValidationIssue } from './entities';
 import { ISSUE_CODES } from './entities';
@@ -140,6 +147,61 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
       furnaceId: f.id,
       pendingFlag: true,
     });
+  }
+
+  const loadCompleteRuntime = ctx.runtimes?.find((r) => r.cabinetId === f.cabinetId)?.status === 'loadComplete';
+  if (f.loadComplete || loadCompleteRuntime) {
+    issues.push({
+      sev: 'error',
+      code: ISSUE_CODES.REPACK_AFTER_LOAD_COMPLETE,
+      msg: `${f.cabinetId} 装填完毕待入炉：自动禁止再拼（拒绝落盘）；手工再拼须强预警。待入炉不当空闲`,
+      furnaceId: f.id,
+      cabinetId: f.cabinetId,
+    });
+  }
+
+  if (f.trays?.length && ctx.trayMaster?.length) {
+    for (const tray of f.trays) {
+      const md = ctx.trayMaster.find((t) => t.id === tray.trayId);
+      const cap = trayCapacityM3(md);
+      if (isTrayOver(tray.vol, cap)) {
+        issues.push({
+          sev: 'error',
+          code: ISSUE_CODES.TRAY_OVERFLOW,
+          msg: `${md?.displayName || tray.trayId} 超托盘：已装 ${tray.vol.toFixed(1)}m³ > 托盘容积 ${cap}m³`,
+          furnaceId: f.id,
+          cabinetId: f.cabinetId,
+        });
+      }
+    }
+  }
+
+  const peers = (ctx.allContents ?? ctx.sameShiftFurnaces).filter((c) => !c.hidden);
+  if (f.trays?.length) {
+    const seen = new Set<string>();
+    for (const tray of f.trays) {
+      for (const row of tray.onTray || []) {
+        if (!row.stockLineId || seen.has(row.stockLineId)) continue;
+        seen.add(row.stockLineId);
+        const line = ctx.poolById(row.stockLineId);
+        if (!line) continue;
+        const share = onTrayShareOf(f, line.id);
+        const otherBoxes = occupiedBoxesOf(line, peers, f.id);
+        const otherVol = occupiedVolOf(line, peers, f.id);
+        const usedBoxes = share.boxes + otherBoxes;
+        const usedVol = share.vol + otherVol;
+        if (usedBoxes > line.boxes || usedVol > line.vol + 1e-6) {
+          issues.push({
+            sev: 'error',
+            code: ISSUE_CODES.ON_TRAY_QTY_OVERFLOW,
+            msg: `${line.id} OnTray 分量超量：箱 ${share.boxes}+已占用${otherBoxes}/${line.boxes}，体积 ${share.vol.toFixed(1)}+已占用${otherVol.toFixed(1)}/${line.vol}`,
+            furnaceId: f.id,
+            lineId: line.id,
+            cabinetId: f.cabinetId,
+          });
+        }
+      }
+    }
   }
 
   return issues;

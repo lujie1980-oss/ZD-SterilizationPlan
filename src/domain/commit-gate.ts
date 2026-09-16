@@ -26,7 +26,16 @@ export interface CommitDecision {
 }
 
 export function cloneFurnaces(furnaces: FurnaceRun[]): FurnaceRun[] {
-  return furnaces.map((f) => ({ ...f, lines: [...f.lines] }));
+  return furnaces.map((f) => {
+    const copy: FurnaceRun = { ...f, lines: [...f.lines] };
+    if (f.trays) {
+      copy.trays = f.trays.map((t) => ({
+        ...t,
+        onTray: (t.onTray || []).map((o) => ({ ...o })),
+      }));
+    }
+    return copy;
+  });
 }
 
 export function applyAssign(furnaces: FurnaceRun[], furnaceId: string, lineIds: string[]): FurnaceRun[] {
@@ -122,11 +131,14 @@ export function decideCommit(opts: {
   }
 
   const persisted = opts.next.map((f) => {
-    if (f.hidden || !changed.has(f.id)) return { ...f, lines: [...f.lines] };
+    if (f.hidden || !changed.has(f.id)) {
+      return cloneFurnaces([f])[0]!;
+    }
     const ferr = validateFurnace(f, opts.ctx).some((i) => i.sev === 'error');
-    if (gate === 'manual' && ferr) return { ...f, lines: [...f.lines], manualViolation: true };
-    if (!ferr) return { ...f, lines: [...f.lines], manualViolation: false };
-    return { ...f, lines: [...f.lines] };
+    const copy = cloneFurnaces([f])[0]!;
+    if (gate === 'manual' && ferr) return { ...copy, manualViolation: true };
+    if (!ferr) return { ...copy, manualViolation: false };
+    return copy;
   });
 
   return {
