@@ -53,6 +53,10 @@
             <div class="shift-tab active" data-shift="白班">白班</div>
             <div class="shift-tab" data-shift="夜班">夜班</div>
           </div>
+          <div class="shift-tabs" id="scheduleModeTabs" title="自动排产：error 拒绝落盘；手工调整：允许 error 并标手工违例">
+            <div class="shift-tab active" data-mode="auto">自动排产</div>
+            <div class="shift-tab" data-mode="manual">手工调整</div>
+          </div>
           <div class="chips">
             <div class="chip">已排体积 <span class="val" id="chipVol">0 m³</span></div>
             <div class="chip">目标负荷 <span class="val" id="chipTarget">—</span></div>
@@ -81,6 +85,7 @@
           <label>D002 最低拼载 (m³) <input class="input" id="cfgD002Min" type="number" step="1" min="0" style="width:80px" /></label>
           <label>其他目标 m³ <input class="input" id="cfgDefaultMin" type="number" step="1" min="0" style="width:80px" /></label>
         </div>
+        <div id="wbModeBanner" class="strong-banner" style="display:none" role="alert"></div>
 
         <div class="wb-body" style="flex:1">
           <div class="wb-left">
@@ -103,14 +108,9 @@
                 <thead>
                   <tr>
                     <th style="width:28px"></th>
-                    <th>标记</th>
                     <th>行号</th>
-                    <th>品名</th>
-                    <th>工艺</th>
-                    <th>客户</th>
-                    <th>箱数</th>
-                    <th>m³</th>
-                    <th>允许柜</th>
+                    <th>品名 / 体积</th>
+                    <th>事实</th>
                   </tr>
                 </thead>
                 <tbody id="poolTableBody"></tbody>
@@ -206,6 +206,7 @@
               <thead>
                 <tr>
                   <th>行号</th><th>工厂</th><th>车间</th><th>物料</th><th>REF</th><th>品名</th>
+                  <th>事实</th>
                   <th>客户号</th><th>交期</th><th>工单</th><th>箱数</th><th>单箱体积</th><th>体积</th>
                   <th>生产批号</th><th>库存地点</th><th>库存状态</th><th>工艺</th><th>允许柜</th>
                 </tr>
@@ -278,9 +279,14 @@
           <div class="stat-box"><div class="num" style="color:var(--info)" id="valInfo">0</div><div class="lbl">信息</div></div>
         </div>
         <div class="card">
-          <div class="card-header">
+          <div class="card-header" style="flex-wrap:wrap;gap:8px">
             <span>当前班次校验问题</span>
-            <span class="hint">点击条目可跳转至对应炉次</span>
+            <div class="shift-tabs" id="valFilterTabs">
+              <div class="shift-tab active" data-val-filter="all">全部</div>
+              <div class="shift-tab" data-val-filter="error">仅 error</div>
+              <div class="shift-tab" data-val-filter="manual">仅手工违例</div>
+            </div>
+            <span class="hint">点击条目可跳转至对应炉次 · 事实条不代替本页</span>
           </div>
           <div class="card-body">
             <div class="issue-list" id="issueList"></div>
@@ -291,6 +297,15 @@
   </div>
 
   <div class="toast-container" id="toastContainer"></div>
+  <div class="drawer-mask" id="factDrawerMask" style="display:none">
+    <aside class="drawer" id="factDrawer" role="dialog" aria-labelledby="factDrawerTitle">
+      <div class="drawer-hd">
+        <span id="factDrawerTitle">规则事实说明</span>
+        <button class="modal-close" type="button" id="factDrawerClose">×</button>
+      </div>
+      <div class="drawer-bd" id="factDrawerBody"></div>
+    </aside>
+  </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

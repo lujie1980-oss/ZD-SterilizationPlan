@@ -4,6 +4,10 @@ export type Base = '老' | '新';
 export type IssueSeverity = 'error' | 'warning' | 'info';
 export type MatType = 'N' | 'K';
 export type SterilizationMethod = 'EO' | '电子束' | '伽玛' | '委外';
+export type ScheduleMode = 'auto' | 'manual';
+export type EditSource = 'auto' | 'manual';
+export type FactTone = 'neutral' | 'warn' | 'pending' | 'danger';
+export type DueTone = 'ok' | 'soon' | 'overdue';
 
 export interface Cabinet {
   id: string;
@@ -78,6 +82,23 @@ export interface FurnaceRun {
   lines: string[];
   hidden?: boolean;
   demoSeed?: boolean;
+  /** 当前校验存在 error 且曾以手工模式落盘 */
+  manualViolation?: boolean;
+}
+
+export interface RuleFact {
+  code: string;
+  label: string;
+  tone: FactTone;
+  detail?: string;
+}
+
+export interface StockLineFacts {
+  dueLabel: string;
+  dueTone: DueTone;
+  hasDesignatedCabinet: boolean;
+  allowedCabinets: string[];
+  facts: RuleFact[];
 }
 
 export interface Interval {
@@ -124,6 +145,8 @@ export interface ValidationIssue {
   lineId?: string;
   cabinetId?: string;
   pendingFlag?: boolean;
+  scheduleModeAtDetect?: ScheduleMode;
+  blocking?: boolean;
 }
 
 export interface CycleConfig {
@@ -155,6 +178,10 @@ export interface AppConfig {
   allowFiller: boolean;
   mixCustomerWarn: boolean;
   showPendingTags: boolean;
+  /** 二期 A：自动排产拒绝 error 落盘；手工调整允许并标手工违例 */
+  scheduleMode: ScheduleMode;
+  /** 手工违例原因（建议填写，不阻断保存） */
+  overrideNotes: Record<string, string>;
   /** 方案 v1.2 正式字段：按工艺覆盖最低拼载，如 `{ D002: 56 }` */
   minLoadM3ByProcess: Record<string, number>;
   /** 旧字段，读入迁移；写出时与 D002 同步，便于对照原型 */
