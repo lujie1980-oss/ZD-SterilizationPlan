@@ -1,6 +1,6 @@
-import { escapeHtml } from './dom';
-import type { PackSuggestPolicy, RuntimeStatus, ScheduleMode } from '../domain/entities';
-import { PACK_DIM_LABELS, PACK_PRESET_LABELS } from '../domain/pack-suggest-policy';
+import { escapeHtml } from '../../lib/html';
+import type { PackSuggestPolicy, RuntimeStatus, ScheduleMode } from '../../../domain/entities';
+import { PACK_DIM_LABELS, PACK_PRESET_LABELS } from '../../../domain/pack-suggest-policy';
 
 export function groupingToolbarContractHtml(opts?: { includeShift?: boolean; includeOnlineDate?: boolean }): string {
   const shift = opts?.includeShift

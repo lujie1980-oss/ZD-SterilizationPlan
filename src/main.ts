@@ -1,4 +1,8 @@
-import './styles.css';
-import { bootApp } from './ui/app';
+import { createSterilizationApp } from './app/create-app';
+import './app/styles/tokens.css';
+import './app/styles/compact.css';
 
-bootApp();
+const { app, router } = createSterilizationApp();
+router.isReady().then(() => {
+  app.mount('#app');
+});

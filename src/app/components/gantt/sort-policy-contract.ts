@@ -1,10 +1,10 @@
-import { escapeHtml } from './dom';
-import type { ScheduleSortPolicy, SortKeyCode } from '../domain/entities';
+import { escapeHtml } from '../../lib/html';
+import type { ScheduleSortPolicy, SortKeyCode } from '../../../domain/entities';
 import {
   OPTIONAL_SORT_CODES,
   SORT_KEY_LABELS,
   formatEffectiveKeysPreview,
-} from '../domain/schedule-sort-policy';
+} from '../../../domain/schedule-sort-policy';
 
 function isOptional(code: SortKeyCode): boolean {
   return (OPTIONAL_SORT_CODES as string[]).includes(code);

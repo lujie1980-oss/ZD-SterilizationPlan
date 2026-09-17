@@ -7,7 +7,7 @@ import {
   groupingToolbarContractHtml,
   placementChip,
   trayOverChip,
-} from '../../ui/grouping-view';
+} from '../../app/components/pack/grouping-contract';
 
 describe('变更-1 组柜 UI 契约 (C1-11/19/22)', () => {
   it('C1-11/22: 组柜工具条无上线日期/入炉时间筛选，无白夜班切换', () => {
