@@ -6,6 +6,7 @@ import type {
   EligibleCabinetRow,
   EligibleDemandRow,
   PackSuggestPolicy,
+  PlanUnit,
   Process,
   RuntimeStatus,
   StockLine,
@@ -18,6 +19,7 @@ import {
   cloneContent,
   findPlacement,
   findReusableContent,
+  hydrateTraysFromPlanUnits,
   normalizeCabinetContent,
 } from './cabinet-content';
 import {
@@ -29,6 +31,12 @@ import {
 } from './pack-suggest-policy';
 import { canAddFurnace, validateFurnace } from './rule-engine';
 import { isEligible } from './pool';
+import {
+  isPlacedUnit,
+  markLegacyLinePlacement,
+  planUnitAsStockLine,
+  unitsOfLine,
+} from './plan-unit';
 
 export function hardEligible(cabinetId: string, line: StockLine, cabinets: Cabinet[]): boolean {
   const cab = cabinets.find((c) => c.id === cabinetId);
@@ -60,6 +68,64 @@ export function listEligibleForCabinet(opts: {
     rows.push({ lineId: line.id, placement, otherCabinetId, line });
   }
   return rows;
+}
+
+export interface EligiblePlanUnitRow {
+  planUnitId: string;
+  stockLineId: string;
+  placement: EligibleDemandRow['placement'];
+  otherCabinetId?: string;
+  unit: PlanUnit;
+  line: StockLine;
+}
+
+export interface EligibleDemandGroup {
+  lineId: string;
+  line: StockLine;
+  placement: EligibleDemandRow['placement'];
+  otherCabinetId?: string;
+  units: EligiblePlanUnitRow[];
+}
+
+export function listEligiblePlanUnitGroups(opts: {
+  cabinetId: string;
+  pool: StockLine[];
+  contents: CabinetContent[];
+  cabinets: Cabinet[];
+  config: AppConfig;
+  planUnits: PlanUnit[];
+}): EligibleDemandGroup[] {
+  const { cabinetId, contents, planUnits } = opts;
+  const rows = listEligibleForCabinet(opts);
+  return rows.map((r) => {
+    const units: EligiblePlanUnitRow[] = unitsOfLine(planUnits, r.lineId).map((u) => {
+      let placement: EligibleDemandRow['placement'] = 'unassigned';
+      let otherCabinetId: string | undefined;
+      if (u.placement) {
+        const content = contents.find((c) => c.id === u.placement!.contentId && !c.hidden);
+        if (content?.cabinetId === cabinetId) placement = 'inThisCabinet';
+        else if (content) {
+          placement = 'inOtherCabinet';
+          otherCabinetId = content.cabinetId;
+        }
+      }
+      return {
+        planUnitId: u.id,
+        stockLineId: r.lineId,
+        placement,
+        otherCabinetId,
+        unit: u,
+        line: r.line,
+      };
+    });
+    return {
+      lineId: r.lineId,
+      line: r.line,
+      placement: r.placement,
+      otherCabinetId: r.otherCabinetId,
+      units,
+    };
+  });
 }
 
 export function assertCompleteEligibleList(rows: EligibleDemandRow[], cabinetId: string, pool: StockLine[], cabinets: Cabinet[], config: AppConfig): void {
@@ -158,6 +224,7 @@ export interface AutoPackResult {
   content?: CabinetContent;
   skippedOther: string[];
   issues: ValidationIssue[];
+  planUnits?: PlanUnit[];
 }
 
 export interface AutoPackBatchResult {
@@ -168,6 +235,7 @@ export interface AutoPackBatchResult {
   skippedOther: string[];
   issues: ValidationIssue[];
   nextSeq: number;
+  planUnits?: PlanUnit[];
 }
 
 function hardBlockSterilizingOrComplete(
@@ -243,6 +311,51 @@ function draftContent(opts: {
   );
 }
 
+function draftFromUnits(opts: {
+  id: string;
+  cabinetId: string;
+  units: PlanUnit[];
+  trayMaster: Tray[];
+  poolById: (id: string) => StockLine | undefined;
+  largeBoxVol: number;
+  cabinet?: Cabinet;
+  loadComplete?: boolean;
+  editSource?: CabinetContent['editSource'];
+}): CabinetContent {
+  const lineIds = [...new Set(opts.units.map((u) => u.stockLineId))];
+  const trays = hydrateTraysFromPlanUnits({
+    contentId: opts.id,
+    cabinetId: opts.cabinetId,
+    units: opts.units,
+    trayMaster: opts.trayMaster,
+    poolById: opts.poolById,
+    largeBoxVol: opts.largeBoxVol,
+  });
+  return normalizeCabinetContent(
+    {
+      id: opts.id,
+      cabinetId: opts.cabinetId,
+      date: null,
+      shift: null,
+      seq: null,
+      lines: lineIds,
+      trays,
+      status: lineIds.length ? 'active' : 'draft',
+      scheduleStatus: 'unscheduled',
+      fillRate: 0,
+      loadComplete: Boolean(opts.loadComplete),
+      editSource: opts.editSource ?? 'auto',
+      taskId: null,
+    },
+    {
+      trayMaster: opts.trayMaster,
+      poolById: opts.poolById,
+      largeBoxVol: opts.largeBoxVol,
+      cabinet: opts.cabinet,
+    },
+  );
+}
+
 function tryPlaceLine(opts: {
   contentId: string;
   cabinetId: string;
@@ -279,9 +392,80 @@ function tryPlaceLine(opts: {
   return { ok: true, content: trial, issues };
 }
 
+function tryPlaceUnits(opts: {
+  contentId: string;
+  cabinetId: string;
+  accepted: PlanUnit[];
+  next: PlanUnit;
+  cabinets: Cabinet[];
+  processes: Process[];
+  trayMaster: Tray[];
+  poolById: (id: string) => StockLine | undefined;
+  config: AppConfig;
+  contents: CabinetContent[];
+  runtimes: CabinetRuntime[];
+}): { ok: boolean; content?: CabinetContent; issues: ValidationIssue[] } {
+  const trial = draftFromUnits({
+    id: opts.contentId,
+    cabinetId: opts.cabinetId,
+    units: [...opts.accepted, opts.next],
+    trayMaster: opts.trayMaster,
+    poolById: opts.poolById,
+    largeBoxVol: opts.config.box.largeBoxVol,
+    cabinet: opts.cabinets.find((c) => c.id === opts.cabinetId),
+  });
+  const issues = validateFurnace(trial, {
+    cabinets: opts.cabinets,
+    processes: opts.processes,
+    poolById: opts.poolById,
+    config: opts.config,
+    sameShiftFurnaces: opts.contents,
+    trayMaster: opts.trayMaster,
+    allContents: opts.contents,
+    runtimes: opts.runtimes,
+  });
+  if (issues.some((i) => i.sev === 'error')) return { ok: false, issues };
+  return { ok: true, content: trial, issues };
+}
+
 function linesOfContent(content: CabinetContent | undefined, poolById: (id: string) => StockLine | undefined): StockLine[] {
   if (!content) return [];
   return content.lines.map(poolById).filter((l): l is StockLine => Boolean(l));
+}
+
+function pickBestUnit(opts: {
+  cabinet: Cabinet;
+  units: PlanUnit[];
+  poolById: (id: string) => StockLine | undefined;
+  loadedVol: number;
+  loadedLines: StockLine[];
+  policy: PackSuggestPolicy;
+}): PlanUnit | null {
+  const asLines: StockLine[] = [];
+  const byUnitId = new Map<string, PlanUnit>();
+  for (const unit of opts.units) {
+    const parent = opts.poolById(unit.stockLineId);
+    if (!parent) continue;
+    const asLine = planUnitAsStockLine(unit, parent);
+    asLines.push(asLine);
+    byUnitId.set(unit.id, unit);
+  }
+  const best = pickBestLineForCabinet({
+    cabinet: opts.cabinet,
+    lines: asLines,
+    loadedVol: opts.loadedVol,
+    loadedLines: opts.loadedLines,
+    policy: opts.policy,
+  });
+  return best ? byUnitId.get(best.id) || null : null;
+}
+
+function resolveUnitsForPack(opts: {
+  planUnits?: PlanUnit[];
+  contents: CabinetContent[];
+}): PlanUnit[] | undefined {
+  if (!opts.planUnits) return undefined;
+  return markLegacyLinePlacement(opts.planUnits, opts.contents);
 }
 
 export function autoPackCabinet(opts: {
@@ -296,7 +480,9 @@ export function autoPackCabinet(opts: {
   nextId: string;
   poolById: (id: string) => StockLine | undefined;
   selectedLineIds?: string[];
+  selectedPlanUnitIds?: string[];
   policy?: PackSuggestPolicy;
+  planUnits?: PlanUnit[];
 }): AutoPackResult {
   const blocked = hardBlockSterilizingOrComplete(opts.cabinetId, opts.contents, opts.runtimes);
   if (blocked) return blocked;
@@ -333,11 +519,16 @@ export function autoPackCabinet(opts: {
     candidateIds = candidateIds.filter((id) => allow.has(id));
   }
   const already = eligible.filter((r) => r.placement === 'inThisCabinet').map((r) => r.lineId);
-  let remaining = candidateIds.map(opts.poolById).filter((l): l is StockLine => Boolean(l));
+  const unitPool = resolveUnitsForPack({
+    planUnits: opts.planUnits,
+    contents: opts.contents,
+  });
+  if (opts.planUnits && !unitPool?.length) {
+    return { ok: false, message: '无计划单元不可装：请先在待排产需求确认中分拆', skippedOther, issues: [] };
+  }
 
   const existing = findReusableContent(opts.contents, opts.cabinetId);
   const contentId = existing?.id || opts.nextId;
-  const accepted: string[] = [...already];
   const ctxBase = {
     cabinets: opts.cabinets,
     processes: opts.processes,
@@ -348,8 +539,102 @@ export function autoPackCabinet(opts: {
     allContents: opts.contents,
     runtimes: opts.runtimes,
   };
-
   const rated = cabinet.ratedLoadM3 || cabinet.capacity || 0;
+  const selectedUnits = opts.selectedPlanUnitIds?.length ? new Set(opts.selectedPlanUnitIds) : null;
+
+  if (unitPool?.length) {
+    const alreadyUnits = unitPool.filter((u) => {
+      if (!already.includes(u.stockLineId) || !isPlacedUnit(u)) return false;
+      const cab = opts.contents.find((c) => c.id === u.placement?.contentId)?.cabinetId;
+      return cab === opts.cabinetId;
+    });
+    let remaining = unitPool.filter((u) => candidateIds.includes(u.stockLineId) && !isPlacedUnit(u));
+    if (selectedUnits) remaining = remaining.filter((u) => selectedUnits.has(u.id));
+    const accepted: PlanUnit[] = alreadyUnits.slice();
+
+    while (remaining.length) {
+      const probe = draftFromUnits({
+        id: contentId,
+        cabinetId: opts.cabinetId,
+        units: accepted,
+        trayMaster: opts.trayMaster,
+        poolById: opts.poolById,
+        largeBoxVol: opts.config.box.largeBoxVol,
+        cabinet,
+      });
+      const loadedVol = loadedVolumeOf(probe, opts.poolById);
+      const fill = rated > 0 ? loadedVol / rated : 0;
+      if (policy.fillMode === 'fillOneFirst' && shouldStopFillOneFirst(fill, policy.targetFillRate)) {
+        break;
+      }
+      const loadedLines = linesOfContent(probe, opts.poolById);
+      const best = pickBestUnit({
+        cabinet,
+        units: remaining,
+        poolById: opts.poolById,
+        loadedVol,
+        loadedLines,
+        policy,
+      });
+      if (!best) break;
+      const placed = tryPlaceUnits({
+        contentId,
+        cabinetId: opts.cabinetId,
+        accepted,
+        next: best,
+        cabinets: opts.cabinets,
+        processes: opts.processes,
+        trayMaster: opts.trayMaster,
+        poolById: opts.poolById,
+        config: opts.config,
+        contents: opts.contents,
+        runtimes: opts.runtimes,
+      });
+      remaining = remaining.filter((u) => u.id !== best.id);
+      if (!placed.ok) continue;
+      accepted.push(best);
+    }
+
+    if (!accepted.length) {
+      return { ok: false, message: '自动组柜无可用行', skippedOther, issues: [], planUnits: unitPool };
+    }
+
+    const content = draftFromUnits({
+      id: contentId,
+      cabinetId: opts.cabinetId,
+      units: accepted,
+      trayMaster: opts.trayMaster,
+      poolById: opts.poolById,
+      largeBoxVol: opts.config.box.largeBoxVol,
+      cabinet,
+    });
+    const issues = validateFurnace(content, ctxBase);
+    if (issues.some((i) => i.sev === 'error')) {
+      return { ok: false, message: '自动组柜存在硬错误，未落盘', skippedOther, issues, planUnits: unitPool };
+    }
+    const nextUnits = unitPool.map((u) => {
+      const hit = accepted.find((a) => a.id === u.id);
+      if (!hit) return u;
+      const tray = content.trays?.find((t) => t.onTray.some((o) => o.planUnitId === u.id));
+      return {
+        ...u,
+        status: 'placed' as const,
+        placement: tray ? { contentId: content.id, trayInContentId: tray.id } : u.placement,
+      };
+    });
+    const unitCount = accepted.length;
+    return {
+      ok: true,
+      message: `已自动组入 ${unitCount} 个计划单元（${content.lines.length} 行）→ ${opts.cabinetId}（未排）`,
+      content,
+      skippedOther,
+      issues,
+      planUnits: nextUnits,
+    };
+  }
+
+  let remaining = candidateIds.map(opts.poolById).filter((l): l is StockLine => Boolean(l));
+  const accepted: string[] = [...already];
 
   while (remaining.length) {
     const probe = draftContent({
@@ -425,6 +710,8 @@ export function autoPackDemands(opts: {
   nextSeq: number;
   poolById: (id: string) => StockLine | undefined;
   policy?: PackSuggestPolicy;
+  planUnits?: PlanUnit[];
+  selectedPlanUnitIds?: string[];
 }): AutoPackBatchResult {
   const policy = opts.policy ?? resolvePackSuggestPolicy(opts.config);
   const skipInOther = opts.config.grouping?.skipInOtherCabinet !== false;
@@ -435,6 +722,136 @@ export function autoPackDemands(opts: {
   const ordered = sortPackCandidates(
     opts.lineIds.map(opts.poolById).filter((l): l is StockLine => Boolean(l)),
   );
+  const unitPool = resolveUnitsForPack({
+    planUnits: opts.planUnits,
+    contents: working,
+  });
+  const selectedUnits = opts.selectedPlanUnitIds?.length ? new Set(opts.selectedPlanUnitIds) : null;
+  const allowLines = new Set(opts.lineIds);
+
+  if (unitPool?.length) {
+    const unitsByCab = new Map<string, PlanUnit[]>();
+    for (const c of working) {
+      const cabUnits = unitPool.filter((u) => u.placement && working.find((x) => x.id === u.placement!.contentId)?.cabinetId === c.cabinetId && isPlacedUnit(u));
+      if (cabUnits.length) unitsByCab.set(c.cabinetId, cabUnits);
+    }
+    let remaining = unitPool.filter((u) => allowLines.has(u.stockLineId) && !isPlacedUnit(u));
+    if (selectedUnits) remaining = remaining.filter((u) => selectedUnits.has(u.id));
+    remaining.sort((a, b) => {
+      const la = opts.poolById(a.stockLineId);
+      const lb = opts.poolById(b.stockLineId);
+      if (la && lb) {
+        const orderedIds = ordered.map((l) => l.id);
+        const ia = orderedIds.indexOf(la.id);
+        const ib = orderedIds.indexOf(lb.id);
+        if (ia !== ib) return ia - ib;
+      }
+      return a.boxSeq - b.boxSeq;
+    });
+
+    for (const unit of remaining) {
+      const line = opts.poolById(unit.stockLineId);
+      if (!line) {
+        unplaced.push(unit.id);
+        continue;
+      }
+      const candRows = listCandidateCabinets({
+        lineIds: [line.id],
+        poolById: opts.poolById,
+        cabinets: opts.cabinets,
+        runtimes: opts.runtimes,
+      }).filter((r) => r.selectable && !r.autoPackBlocked && hardEligible(r.cabinetId, line, opts.cabinets));
+      const cabinets = candRows.map((r) => r.cabinet);
+      if (!cabinets.length) {
+        unplaced.push(unit.id);
+        continue;
+      }
+      let remainingCabs = cabinets.slice();
+      let done = false;
+      const asLine = planUnitAsStockLine(unit, line);
+      while (remainingCabs.length && !done) {
+        const cabinet = pickBestCabinetForLine({
+          line: asLine,
+          cabinets: remainingCabs,
+          loadedVolOf: (id) => loadedVolumeOf(findReusableContent(working, id), opts.poolById),
+          loadedLinesOf: (id) => linesOfContent(findReusableContent(working, id), opts.poolById),
+          policy,
+        });
+        if (!cabinet) break;
+        remainingCabs = remainingCabs.filter((c) => c.id !== cabinet.id);
+        const addCheck = canAddFurnace(cabinet.id, {
+          cabinets: opts.cabinets,
+          processes: opts.processes,
+          poolById: opts.poolById,
+          config: opts.config,
+          sameShiftFurnaces: working,
+        });
+        if (!addCheck.ok) continue;
+        const existing = findReusableContent(working, cabinet.id);
+        const contentId = existing?.id || `CC${nextSeq}`;
+        const accepted = unitsByCab.get(cabinet.id)?.slice() || [];
+        const placedTry = tryPlaceUnits({
+          contentId,
+          cabinetId: cabinet.id,
+          accepted,
+          next: unit,
+          cabinets: opts.cabinets,
+          processes: opts.processes,
+          trayMaster: opts.trayMaster,
+          poolById: opts.poolById,
+          config: opts.config,
+          contents: working,
+          runtimes: opts.runtimes,
+        });
+        if (!placedTry.ok || !placedTry.content) continue;
+        if (!existing) nextSeq += 1;
+        const upserted = replaceCabinetActive(working, placedTry.content);
+        if (!upserted.ok) continue;
+        working.splice(0, working.length, ...upserted.contents);
+        unitsByCab.set(cabinet.id, [...accepted, unit]);
+        done = true;
+        break;
+      }
+      if (!done) unplaced.push(unit.id);
+    }
+
+    const changed = working.filter((c) => {
+      const prev = opts.contents.find((p) => p.id === c.id);
+      if (!prev) return (c.trays || []).some((t) => t.onTray.length) || c.lines.length > 0;
+      const prevBoxes = (prev.trays || []).reduce((s, t) => s + t.boxes, 0);
+      const nextBoxes = (c.trays || []).reduce((s, t) => s + t.boxes, 0);
+      return prev.lines.length !== c.lines.length || prevBoxes !== nextBoxes;
+    });
+    if (!changed.length) {
+      return {
+        ok: false,
+        message: '自动组柜无可用行',
+        contents: [],
+        unplaced,
+        skippedOther,
+        issues: [],
+        nextSeq,
+        planUnits: unitPool,
+      };
+    }
+    const cabNote = [...new Set(changed.map((c) => c.cabinetId))].join('、');
+    const placedCount = changed.reduce((s, c) => {
+      const prev = opts.contents.find((p) => p.id === c.id);
+      const prevBoxes = (prev?.trays || []).reduce((n, t) => n + t.boxes, 0);
+      const nextBoxes = (c.trays || []).reduce((n, t) => n + t.boxes, 0);
+      return s + Math.max(0, nextBoxes - prevBoxes, c.lines.length - (prev?.lines.length || 0));
+    }, 0);
+    return {
+      ok: true,
+      message: `已按建议策略组入 ${placedCount} 个计划单元 → ${cabNote}（未排）`,
+      contents: working,
+      unplaced,
+      skippedOther,
+      issues: [],
+      nextSeq,
+      planUnits: unitPool,
+    };
+  }
 
   for (const line of ordered) {
     const placed = findPlacement(line.id, working);
@@ -543,7 +960,9 @@ export function manualPackCabinet(opts: {
   nextId: string;
   poolById: (id: string) => StockLine | undefined;
   allowInOther: boolean;
-}): { ok: boolean; message: string; content?: CabinetContent; issues: ValidationIssue[] } {
+  planUnitIds?: string[];
+  planUnits?: PlanUnit[];
+}): { ok: boolean; message: string; content?: CabinetContent; issues: ValidationIssue[]; planUnits?: PlanUnit[] } {
   const runtime = opts.runtimes.find((r) => r.cabinetId === opts.cabinetId);
   if (runtime?.status === 'sterilizing') {
     return {
@@ -554,6 +973,61 @@ export function manualPackCabinet(opts: {
   }
   const existing = findReusableContent(opts.contents, opts.cabinetId);
   const contentId = existing?.id || opts.nextId;
+
+  if (opts.planUnitIds) {
+    if (!opts.planUnitIds.length) {
+      return { ok: false, message: '无计划单元不可装：请勾选计划单元（点行仅查看）', issues: [], planUnits: opts.planUnits || [] };
+    }
+    const pool = markLegacyLinePlacement(opts.planUnits || [], opts.contents);
+    const keepUnits = pool.filter((u) => {
+      const cab = opts.contents.find((c) => c.id === u.placement?.contentId)?.cabinetId;
+      return isPlacedUnit(u) && cab === opts.cabinetId;
+    });
+    const add: PlanUnit[] = [];
+    for (const id of opts.planUnitIds) {
+      const unit = pool.find((u) => u.id === id);
+      if (!unit) continue;
+      if (isPlacedUnit(unit)) {
+        const cab = opts.contents.find((c) => c.id === unit.placement?.contentId)?.cabinetId;
+        if (cab && cab !== opts.cabinetId && !opts.allowInOther) continue;
+        if (cab === opts.cabinetId) continue;
+      }
+      if (!keepUnits.some((u) => u.id === unit.id) && !add.some((u) => u.id === unit.id)) add.push(unit);
+    }
+    const units = [...keepUnits, ...add];
+    if (!units.length) {
+      return { ok: false, message: '无计划单元不可装', issues: [], planUnits: pool };
+    }
+    const content = draftFromUnits({
+      id: contentId,
+      cabinetId: opts.cabinetId,
+      units,
+      trayMaster: opts.trayMaster,
+      poolById: opts.poolById,
+      largeBoxVol: opts.config.box.largeBoxVol,
+      cabinet: opts.cabinets.find((c) => c.id === opts.cabinetId),
+      loadComplete: existing?.loadComplete,
+      editSource: 'manual',
+    });
+    const nextUnits = pool.map((u) => {
+      const hit = units.find((x) => x.id === u.id);
+      if (!hit) return u;
+      const tray = content.trays?.find((t) => t.onTray.some((o) => o.planUnitId === u.id));
+      return {
+        ...u,
+        status: 'placed' as const,
+        placement: tray ? { contentId: content.id, trayInContentId: tray.id } : u.placement,
+      };
+    });
+    return {
+      ok: true,
+      message: `已手动组入 ${add.length} 个计划单元 → ${opts.cabinetId}（未排）`,
+      content,
+      issues: [],
+      planUnits: nextUnits,
+    };
+  }
+
   const keep = existing ? [...existing.lines] : [];
   const add: string[] = [];
   for (const id of opts.lineIds) {

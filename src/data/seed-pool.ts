@@ -113,6 +113,13 @@ const RAW: SeedInput[] = [
     boxes: 10, boxVol: 0.05, batch: 'B2026070000', loc: '待灭菌仓·老', stockStatus: '限制',
     process: 'EO通用', allowed: ['柜9'], urgent: false, suggest: '',
   },
+  {
+    id: 'P016', factory: '3010', workshop: '制造三车间', matType: 'N', ref: 'REF-D002-C03',
+    name: 'D002 三箱样件', customer: 'C-华润', due: '2026-07-26', wo: 'WO-3010-78499',
+    salesOrderNo: 'SO-3010-78499', dimL: 400, dimW: 300, dimH: 300,
+    boxes: 3, boxVol: 0.08, batch: 'B2026071899', loc: '待灭菌仓·老', stockStatus: '非限制',
+    process: 'D002', allowed: ['柜9', '柜20'], urgent: false, suggest: '',
+  },
 ];
 
 export function createSeedPool(): StockLine[] {

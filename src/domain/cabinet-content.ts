@@ -3,12 +3,14 @@ import type {
   CabinetContent,
   ContentStatus,
   FurnaceRun,
+  PlanUnit,
+  PlanUnitsOnTray,
   StockLine,
-  StockLinesOnTray,
   Tray,
   TraysInCabinetContent,
 } from './entities';
 import { furnaceVol, largeBoxCount } from './pool';
+import { isPlacedUnit, onTrayRowForUnit } from './plan-unit';
 
 export function flattenOnTrayIds(trays: TraysInCabinetContent[] | undefined): string[] {
   if (!trays?.length) return [];
@@ -46,11 +48,17 @@ export function syncTrayAggregates(
   const lineSnaps: Array<Pick<StockLine, 'boxVol' | 'boxes'>> = [];
   for (const row of onTray) {
     const line = poolById(row.stockLineId);
-    if (row.vol == null || !Number.isFinite(row.vol)) row.vol = line?.vol ?? 0;
-    if (row.boxes == null || !Number.isFinite(row.boxes)) row.boxes = line?.boxes ?? 0;
+    if (row.vol == null || !Number.isFinite(row.vol)) {
+      row.vol = row.planUnitId ? (line?.boxVol ?? 0) : (line?.vol ?? 0);
+    }
+    if (row.boxes == null || !Number.isFinite(row.boxes)) {
+      row.boxes = row.planUnitId ? 1 : (line?.boxes ?? 0);
+    }
+    if (row.planUnitId) row.boxes = 1;
     vol += row.vol;
     boxes += row.boxes;
-    lineSnaps.push({ boxVol: line?.boxVol ?? 0, boxes: row.boxes });
+    const boxVol = row.boxes === 1 ? row.vol || line?.boxVol || 0 : line?.boxVol ?? 0;
+    lineSnaps.push({ boxVol, boxes: row.boxes });
   }
   return {
     ...tray,
@@ -96,7 +104,7 @@ export function hydrateTraysFromLines(opts: {
     const trayMd = pickTray(i);
     const line = poolById(lineId);
     const trayInId = `${contentId}::${trayMd.id}`;
-    const on: StockLinesOnTray = {
+    const on: PlanUnitsOnTray = {
       id: `${trayInId}::${lineId}`,
       trayInContentId: trayInId,
       stockLineId: lineId,
@@ -121,6 +129,58 @@ export function hydrateTraysFromLines(opts: {
     }
   });
   return trays.map((t) => syncTrayAggregates(t, poolById, largeBoxVol));
+}
+
+/** 将 PlanUnit 装入托盘：优先填入尚未超容的层，否则落入末层。 */
+export function hydrateTraysFromPlanUnits(opts: {
+  contentId: string;
+  cabinetId: string;
+  units: PlanUnit[];
+  trayMaster: Tray[];
+  poolById: (id: string) => StockLine | undefined;
+  largeBoxVol: number;
+}): TraysInCabinetContent[] {
+  const { contentId, cabinetId, units, trayMaster, poolById, largeBoxVol } = opts;
+  const master = traysForCabinet(cabinetId, trayMaster);
+  const trays: TraysInCabinetContent[] = (master.length
+    ? master
+    : [
+        {
+          id: `${cabinetId}-tray-01`,
+          cabinetId,
+          level: 1,
+          displayName: '第1层托盘',
+          status: '可用' as const,
+        },
+      ]
+  ).map((md) => ({
+    id: `${contentId}::${md.id}`,
+    contentId,
+    trayId: md.id,
+    level: md.level,
+    vol: 0,
+    boxes: 0,
+    largeBoxes: 0,
+    onTray: [] as PlanUnitsOnTray[],
+  }));
+  if (!units.length) return trays.map((t) => syncTrayAggregates(t, poolById, largeBoxVol));
+
+  const capOf = (tray: TraysInCabinetContent): number => {
+    const md = master.find((m) => m.id === tray.trayId);
+    return trayCapacityM3(md);
+  };
+  for (const unit of units) {
+    const fit =
+      trays.find((t) => {
+        const cap = capOf(t);
+        if (cap <= 0) return t === trays[0];
+        return t.vol + unit.vol <= cap + 1e-9;
+      }) || trays[trays.length - 1]!;
+    fit.onTray.push(onTrayRowForUnit(fit, unit));
+    fit.vol += unit.vol;
+    fit.boxes += 1;
+  }
+  return trays.filter((t) => t.onTray.length > 0).map((t) => syncTrayAggregates(t, poolById, largeBoxVol));
 }
 
 export function trayCapacityM3(tray: Pick<Tray, 'capacityM3' | 'ratedLoadM3'> | undefined): number {
@@ -159,7 +219,20 @@ export function occupiedVolOf(line: StockLine, contents: CabinetContent[], exclu
   return occupiedQty(line, contents, 'vol', excludeContentId);
 }
 
-export function remainingBoxes(line: StockLine, contents: CabinetContent[], excludeContentId?: string): number {
+export function remainingBoxes(
+  line: StockLine,
+  contents: CabinetContent[],
+  excludeContentId?: string,
+  planUnits?: PlanUnit[],
+): number {
+  if (planUnits?.some((u) => u.stockLineId === line.id)) {
+    const placed = planUnits.filter((u) => {
+      if (u.stockLineId !== line.id || !isPlacedUnit(u)) return false;
+      if (excludeContentId && u.placement?.contentId === excludeContentId) return false;
+      return true;
+    }).length;
+    return Math.max(0, line.boxes - placed);
+  }
   return Math.max(0, line.boxes - occupiedBoxesOf(line, contents, excludeContentId));
 }
 

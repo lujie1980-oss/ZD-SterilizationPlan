@@ -167,15 +167,60 @@ export interface StockLine {
   shift?: Shift;
 }
 
-/** 托盘上的需求行分量（正式名）；旧 OnLayer 仅迁移别名 */
-export interface StockLinesOnTray {
+export type PlanUnitStatus = 'unassigned' | 'placed';
+export type PlanUnitCreationStatus = 'applied' | 'stale';
+export type PlanUnitRuleCode = 'oneBoxOneUnit';
+
+export interface PlanUnitPlacement {
+  contentId: string;
+  trayInContentId: string;
+}
+
+/** 计划单元：默认一箱一单元；组柜/装托盘真源 */
+export interface PlanUnit {
+  id: string;
+  stockLineId: string;
+  creationId: string;
+  boxSeq: number;
+  vol: number;
+  dimL?: number;
+  dimW?: number;
+  dimH?: number;
+  salesOrderNo?: string;
+  salesOrderLine?: string;
+  placement: PlanUnitPlacement | null;
+  status: PlanUnitStatus;
+}
+
+export interface PlanUnitCreation {
+  id: string;
+  stockLineId: string;
+  ruleCode: PlanUnitRuleCode;
+  sourceBoxCount: number;
+  createdCount: number;
+  status: PlanUnitCreationStatus;
+  executedAt: string;
+  version: number;
+}
+
+/**
+ * 托盘装载行。正式名为 PlanUnitsOnTray（boxes 恒 1）；
+ * 兼容期可读旧 StockLinesOnTray 多箱分量（无 planUnitId，boxes 可 >1）。
+ */
+export interface PlanUnitsOnTray {
   id: string;
   trayInContentId: string;
   stockLineId: string;
+  /** 正式字段；旧快照可缺省，启动时迁移补齐 */
+  planUnitId?: string;
+  /** 正式记录恒为 1；旧分量可 >1 */
   boxes: number;
   vol: number;
   splitOf?: string | null;
 }
+
+/** @deprecated 迁移别名 = PlanUnitsOnTray */
+export type StockLinesOnTray = PlanUnitsOnTray;
 
 /** 计划内一层 = 一次占用某个 Tray；禁止无 trayId 的临时层 */
 export interface TraysInCabinetContent {
@@ -186,7 +231,7 @@ export interface TraysInCabinetContent {
   vol: number;
   boxes: number;
   largeBoxes: number;
-  onTray: StockLinesOnTray[];
+  onTray: PlanUnitsOnTray[];
 }
 
 export interface CabinetTask {
@@ -262,8 +307,8 @@ export interface CabinetContent {
 export type FurnaceRun = CabinetContent;
 /** @deprecated 迁移别名 = TraysInCabinetContent */
 export type Layer = TraysInCabinetContent;
-/** @deprecated 迁移别名 = StockLinesOnTray */
-export type OnLayer = StockLinesOnTray;
+/** @deprecated 迁移别名 = PlanUnitsOnTray */
+export type OnLayer = PlanUnitsOnTray;
 
 export interface RuleFact {
   code: string;
@@ -396,6 +441,8 @@ export type LegacyConfigInput = Partial<AppConfig> & {
 
 export interface PlanSnapshot {
   version?: number;
+  /** 领域快照结构版本；PlanUnit 迁后为 3 */
+  schemaVersion?: number;
   date: string;
   shift: Shift;
   /** 一期字段；与 contents 双写，读时优先 contents */
@@ -407,6 +454,8 @@ export interface PlanSnapshot {
   nextFurnaceSeq: number;
   nextTaskSeq?: number;
   virtualLines: StockLine[];
+  planUnits?: PlanUnit[];
+  planUnitCreations?: PlanUnitCreation[];
   config: LegacyConfigInput;
   planSeedVersion: number;
 }
@@ -422,6 +471,8 @@ export interface RuleContext {
   /** 全量组柜计划（含未排）；缺省回退 sameShiftFurnaces，用于 OnTray 剩余量 */
   allContents?: CabinetContent[];
   runtimes?: CabinetRuntime[];
+  /** 变更-7：PlanUnit 真源；缺省时剩余量回退旧 OnTray 分量 */
+  planUnits?: PlanUnit[];
 }
 
 export const PACK_POLICY_ERROR_CODES = {
@@ -464,6 +515,9 @@ export const ISSUE_CODES = {
   ON_TRAY_QTY_OVERFLOW: 'ON_TRAY_QTY_OVERFLOW',
   TRAY_REQUIRED: 'TRAY_REQUIRED',
   TRAY_OVERFLOW: 'TRAY_OVERFLOW',
+  PU_RECREATE_BLOCKED: 'PU_RECREATE_BLOCKED',
+  PU_MIGRATE_FAIL: 'PU_MIGRATE_FAIL',
+  PU_NO_UNITS: 'PU_NO_UNITS',
 } as const;
 
 export type IssueCode = (typeof ISSUE_CODES)[keyof typeof ISSUE_CODES];

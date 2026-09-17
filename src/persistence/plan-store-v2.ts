@@ -22,11 +22,14 @@ import type {
   FurnaceRun,
   FurnaceSchedule,
   PlanSnapshot,
+  PlanUnit,
+  PlanUnitCreation,
   Shift,
   StockLine,
   Tray,
 } from '../domain/entities';
 import { isPlanSparse, lookupPool, mergeVirtualLinesIntoPool } from '../domain/pool';
+import { migratePlanToPlanUnits, PLAN_SCHEMA_VERSION } from '../domain/plan-unit';
 import { ensureSplitFurnaces } from '../domain/split-wizard';
 
 export interface LoadedPlan {
@@ -40,6 +43,10 @@ export interface LoadedPlan {
   nextFurnaceSeq: number;
   nextTaskSeq?: number;
   virtualLines: StockLine[];
+  planUnits?: PlanUnit[];
+  planUnitCreations?: PlanUnitCreation[];
+  schemaVersion?: number;
+  migrateError?: string;
   config: AppConfig;
   planSeedVersion: number;
   sparseWiped: boolean;
@@ -106,6 +113,7 @@ export function serializePlan(plan: LoadedPlan): PlanSnapshot {
   const contents = plan.contents?.length ? plan.contents : plan.furnaces;
   return {
     version: PLAN_SEED_VERSION,
+    schemaVersion: plan.schemaVersion || PLAN_SCHEMA_VERSION,
     date: plan.date,
     shift: plan.shift,
     furnaces: contents,
@@ -116,6 +124,8 @@ export function serializePlan(plan: LoadedPlan): PlanSnapshot {
     nextFurnaceSeq: plan.nextFurnaceSeq,
     nextTaskSeq: plan.nextTaskSeq || 1,
     virtualLines: plan.virtualLines,
+    planUnits: plan.planUnits || [],
+    planUnitCreations: plan.planUnitCreations || [],
     config: persistableConfig(plan.config),
     planSeedVersion: plan.planSeedVersion,
   };
@@ -147,6 +157,9 @@ export function loadPlan(master?: { cabinets?: Cabinet[]; trays?: Tray[] }): Loa
     nextFurnaceSeq: 1,
     nextTaskSeq: 1,
     virtualLines: [],
+    planUnits: [],
+    planUnitCreations: [],
+    schemaVersion: 0,
     config: defaultAppConfig(),
     planSeedVersion: 0,
     sparseWiped: false,
@@ -192,6 +205,9 @@ export function loadPlan(master?: { cabinets?: Cabinet[]; trays?: Tray[] }): Loa
     nextFurnaceSeq: data.nextFurnaceSeq || 1,
     nextTaskSeq: data.nextTaskSeq || 1,
     virtualLines,
+    planUnits: Array.isArray(data.planUnits) ? data.planUnits : [],
+    planUnitCreations: Array.isArray(data.planUnitCreations) ? data.planUnitCreations : [],
+    schemaVersion: data.schemaVersion || 0,
     config,
     planSeedVersion: data.planSeedVersion ?? data.version ?? 0,
     sparseWiped: false,
@@ -204,20 +220,43 @@ export function loadPlan(master?: { cabinets?: Cabinet[]; trays?: Tray[] }): Loa
     plan.nextFurnaceSeq = restored.nextSeq;
   }
 
-  plan.runtimes = deriveAllRuntimes(cabinets, plan.contents || plan.furnaces, plan.runtimes || []);
-
   if (isDemoSeedEnabled(plan.config) && isPlanSparse(plan.furnaces, DEMO_MIN_LOADS, DEMO_MIN_CABINETS, plan.virtualLines)) {
     plan.furnaces = [];
     plan.contents = [];
     plan.tasks = [];
     plan.schedules = [];
+    plan.planUnits = [];
+    plan.planUnitCreations = [];
+    plan.schemaVersion = 0;
     plan.nextFurnaceSeq = 1;
     plan.nextTaskSeq = 1;
     plan.planSeedVersion = 0;
     plan.sparseWiped = true;
-  } else if (fromLegacy) {
-    plan.planSeedVersion = PLAN_SEED_VERSION;
-    savePlan(plan);
+  } else {
+    const migrated = migratePlanToPlanUnits({
+      contents: plan.contents || plan.furnaces,
+      poolById: poolLookup(plan.virtualLines),
+      creations: plan.planUnitCreations,
+      planUnits: plan.planUnits,
+      schemaVersion: plan.schemaVersion,
+    });
+    if (!migrated.ok) {
+      plan.migrateError = migrated.message;
+    } else {
+      plan.furnaces = migrated.contents;
+      plan.contents = migrated.contents;
+      plan.planUnits = migrated.planUnits;
+      plan.planUnitCreations = migrated.creations;
+      const bumped = plan.schemaVersion !== PLAN_SCHEMA_VERSION || migrated.migrated;
+      plan.schemaVersion = migrated.schemaVersion;
+      if (bumped) savePlan(plan);
+    }
+    if (fromLegacy) {
+      plan.planSeedVersion = PLAN_SEED_VERSION;
+      savePlan(plan);
+    }
   }
+
+  plan.runtimes = deriveAllRuntimes(cabinets, plan.contents || plan.furnaces, plan.runtimes || []);
   return plan;
 }
