@@ -1,14 +1,14 @@
 # 振德医疗 · 灭菌中心排产 MVP
 
-许昌灭菌中心 EO 自有柜：**待灭菌合格库存 → 组柜（未排）→ 进炉甘特写回上线日期**。本仓库为 Vite + TypeScript SPA，对齐领域模型 v1.1 与变更-1（上线日期解耦 + 组柜双入口）。演示种子数据，无真实 SAP/WMS 后端。
+许昌灭菌中心 EO 自有柜：**待灭菌合格库存 → 组柜（未排）→ 进炉甘特写回上线日期**。本仓库为 **Vue 3 + Vue Router + Pinia**（Vite）SPA，对齐领域模型 v1.1 与变更-1/2/3；变更-4 整仓切 Vue 并采用中度紧凑 UI。演示种子数据，无真实 SAP/WMS 后端。
 
 ## 运行
 
 ```bash
 npm install
 npm run dev      # 开发服务器
-npm run build    # tsc --noEmit && vite build
-npm test         # Vitest 领域单测
+npm run build    # vue-tsc --noEmit && vite build
+npm test         # Vitest（domain + Vue 组件/路由）
 ```
 
 浏览器打开终端提示的本地地址（默认 `http://localhost:5173`）。角色展示固定为「计划员 · 王工」，本期无鉴权。
@@ -18,6 +18,41 @@ npm test         # Vitest 领域单测
 ```bash
 VITE_ENABLE_DEMO_SEED=false npm run build
 ```
+
+## Docker 一键运行（本机）
+
+本仓库是 Vue 3 静态 SPA，**无后端**。用 Docker 在本机构建 `dist`，由 nginx 提供 HTTP。数据仍在浏览器 `localStorage`（key：`zhende_sterilization_plan_v2`），无真实 SAP/WMS。本 compose **只部署本 SPA**，不含 8088 原型或其他服务。
+
+前提：已安装 Docker Desktop，或 Docker Engine + Compose v2。MateBook / 本机验证请 **rebuild**：
+
+```bash
+docker compose up -d --build
+```
+
+浏览器打开：**http://127.0.0.1:18080/**
+
+默认端口：本机 **18080** → 容器 **80**（nginx，`try_files` SPA fallback）。history 路由直接刷新 `/pack` `/gantt` 等不应 404。
+
+停止并删除本 compose 容器：
+
+```bash
+docker compose down
+```
+
+若本机 **18080** 已被占用，把 `docker-compose.yml` 的 `ports` 改为备用端口 **28080** 后重新 `--build`，打开 http://127.0.0.1:28080/ 。
+
+## 路由（变更-4）
+
+| 路径 | 页面 |
+|------|------|
+| `/pack` | 组柜 |
+| `/workbench` | 已排期浏览（过渡） |
+| `/gantt` | 进炉计划 |
+| `/pool` | 待灭菌可排池 |
+| `/validation` | 校验中心 |
+| `/cabinets` `/processes` `/boxspecs` | 主数据 |
+
+默认进入 `/pack`。中度紧凑令牌见 `src/app/styles/tokens.css`（侧栏 168px、表行 30px、顶栏 40px、控件 28px）。视觉对照 8088 原型仅作密度参考，**不以原型为实现结论**。
 
 ## 演示路径（验收）
 
@@ -53,33 +88,19 @@ VITE_ENABLE_DEMO_SEED=false npm run build
 
 ```
 src/
-  domain/
-    entities.ts          # 领域类型与校验码
-    rule-engine.ts       # 硬/软/info 约束
-    entry-scheduler.ts   # 进炉排序 + 周期 + 重叠
-    split-wizard.ts      # 拆炉虚拟行
-    suggest-combine.ts   # D002 → 柜9 演示拼炉
-    export-csv.ts        # 日计划 CSV
-    grouping.ts          # 双入口完整可进列表 / 自动组柜 / 装填完毕
-    pack-suggest-policy.ts # 变更-3 组柜建议策略（校验 / 打分 / 预设）
-    schedule-sort-policy.ts # 变更-2 甘特入炉排序策略（校验 / 生效键 / 比较器）
-    cabinet-content.ts   # CabinetContent + TraysInCabinetContent + StockLinesOnTray
-    cabinet-task.ts      # 甘特才建 Task 链并写回 date/shift
-    cabinet-runtime.ts   # 柜运行态（与主数据分离）
-    facts.ts             # 池行 FactStrip 派生（不跑全量校验）
-    commit-gate.ts       # 双模式提交闸门（auto 拒 error / 建议拼炉强制 auto）
-    pool.ts / dates.ts / min-load.ts  # 生效拼载（minLoadM3ByProcess）
-  data/
-    seed-cabinets.ts     # Cabinet + Tray 主数据（额定装载 / 一托盘一层）
-    seed-processes.ts / seed-pool.ts / seed-boxspecs.ts
-    seed-demo-plan.ts    # 未排组柜种子
-    config-defaults.ts   # 全部阈值默认值（禁止 UI 魔法数）
+  main.ts / App.vue      # Vue 3 createApp + Pinia + Router
+  domain/                # 纯 TS：策略、约束、组柜/甘特（零 Vue import）
   persistence/
     plan-store-v2.ts     # localStorage zhende_sterilization_plan_v2（contents 双写 furnaces）
-  ui/                    # 中文界面（组柜双入口 + 过渡日排产）
+  app/
+    router/              # /pack /gantt /pool /validation …
+    stores/planStore.ts  # persistence + domain 命令唯一入口（.vue 不碰 localStorage）
+    stores/uiStore.ts    # 侧栏折叠、toast、抽屉
+    views/               # PackCabinet / GanttPlan / DemandPool / ValidationCenter …
+    styles/tokens.css    # 中度紧凑密度令牌（镜像 8088 原型 :root）
 ```
 
-侧栏：`grouping` 组柜（选柜/选需求）· `workbench` 已排期浏览（过渡）· `furnace-plan` 进炉计划 · `pool` 待灭菌可排池 · `cabinets` 灭菌柜 · `processes` 工艺与指定柜 · `boxspecs` 箱规 · `validation` 校验中心。
+侧栏：组柜 `/pack` · 已排期浏览 `/workbench` · 进炉计划 `/gantt` · 待灭菌可排池 `/pool` · 灭菌柜 · 工艺与指定柜 · 箱规 · 校验中心 `/validation`。
 
 ## 持久化（plan v2）
 
