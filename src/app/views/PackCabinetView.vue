@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { RouterLink } from 'vue-router';
-import { CABINETS, cabinetById, traysForCabinet, usableCabinets } from '../../data/seed-cabinets';
 import { trayCapacityM3 } from '../../domain/cabinet-content';
 import { listCandidateCabinets, listEligibleForCabinet } from '../../domain/grouping';
 import { validateFurnace } from '../../domain/rule-engine';
@@ -30,7 +29,7 @@ const eligibleRows = computed((): EligibleDemandRow[] => {
     cabinetId: cabId.value,
     pool: plan.eligiblePool(),
     contents: plan.furnaces,
-    cabinets: CABINETS,
+    cabinets: plan.masterCabinets,
     config: plan.config,
   });
 });
@@ -55,7 +54,7 @@ const candidateCabs = computed(() => {
   return listCandidateCabinets({
     lineIds: viewIds,
     poolById: (id) => plan.poolById(id),
-    cabinets: CABINETS,
+    cabinets: plan.masterCabinets,
     runtimes: runtimes.value,
   });
 });
@@ -64,8 +63,8 @@ const layer = computed(() => {
   const cabinetId = cabId.value;
   if (!cabinetId) return null;
   const content = plan.furnaces.find((f) => f.cabinetId === cabinetId && !f.hidden);
-  const cab = cabinetById(cabinetId);
-  const trays = traysForCabinet(cabinetId);
+  const cab = plan.findCabinet(cabinetId);
+  const trays = plan.traysForCabinet(cabinetId);
   const fill = content?.fillRate ?? 0;
   const unscheduled = !content?.date;
   const layers = (
@@ -188,7 +187,7 @@ function isCabDisabled(id: string): boolean {
           <div class="grp-col-hd">选柜</div>
           <div class="grp-scroll">
             <div
-              v-for="c in usableCabinets()"
+              v-for="c in plan.usableCabinets"
               :key="c.id"
               class="grp-cab"
               :class="{ selected: cabId === c.id, disabled: isCabDisabled(c.id) }"

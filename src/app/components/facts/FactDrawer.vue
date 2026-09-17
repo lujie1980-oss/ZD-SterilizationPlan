@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { deriveFacts } from '../../../domain/facts';
-import { PROCESSES } from '../../../data/seed-processes';
 import { usePlanStore } from '../../stores/planStore';
 import { useUiStore } from '../../stores/uiStore';
 
@@ -9,9 +8,9 @@ const plan = usePlanStore();
 const ui = useUiStore();
 const line = computed(() => (ui.factLineId ? plan.poolById(ui.factLineId) : undefined));
 const facts = computed(() =>
-  line.value ? deriveFacts(line.value, PROCESSES, plan.config, plan.date) : null,
+  line.value ? deriveFacts(line.value, plan.masterProcesses, plan.config, plan.date) : null,
 );
-const proc = computed(() => (line.value ? PROCESSES.find((p) => p.code === line.value!.process) : undefined));
+const proc = computed(() => (line.value ? plan.masterProcesses.find((p) => p.code === line.value!.process) : undefined));
 </script>
 
 <template>

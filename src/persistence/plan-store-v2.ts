@@ -15,6 +15,7 @@ import { normalizeCabinetContent } from '../domain/cabinet-content';
 import { demoRuntimeOverrides, deriveAllRuntimes } from '../domain/cabinet-runtime';
 import type {
   AppConfig,
+  Cabinet,
   CabinetContent,
   CabinetRuntime,
   CabinetTask,
@@ -23,6 +24,7 @@ import type {
   PlanSnapshot,
   Shift,
   StockLine,
+  Tray,
 } from '../domain/entities';
 import { isPlanSparse, lookupPool, mergeVirtualLinesIntoPool } from '../domain/pool';
 import { ensureSplitFurnaces } from '../domain/split-wizard';
@@ -77,7 +79,10 @@ export function migrateContents(
   rawContents: CabinetContent[] | undefined,
   virtualLines: StockLine[],
   config: AppConfig,
+  master?: { cabinets?: Cabinet[]; trays?: Tray[] },
 ): CabinetContent[] {
+  const cabinets = master?.cabinets?.length ? master.cabinets : CABINETS;
+  const trays = master?.trays?.length ? master.trays : TRAYS;
   const source = Array.isArray(rawContents) && rawContents.length ? rawContents : rawFurnaces;
   const poolById = poolLookup(virtualLines);
   return (source || []).map((f) =>
@@ -88,10 +93,10 @@ export function migrateContents(
         shift: f.shift ?? null,
       },
       {
-        trayMaster: TRAYS,
+        trayMaster: trays,
         poolById,
         largeBoxVol: config.box.largeBoxVol,
-        cabinet: CABINETS.find((c) => c.id === f.cabinetId),
+        cabinet: cabinets.find((c) => c.id === f.cabinetId),
       },
     ),
   );
@@ -130,7 +135,7 @@ export function parseSnapshot(raw: string): PlanSnapshot | null {
   }
 }
 
-export function loadPlan(): LoadedPlan {
+export function loadPlan(master?: { cabinets?: Cabinet[]; trays?: Tray[] }): LoadedPlan {
   const fallback: LoadedPlan = {
     date: '2026-07-24',
     shift: '白班',
@@ -167,7 +172,14 @@ export function loadPlan(): LoadedPlan {
 
   const config = mergeConfig(data.config as Partial<AppConfig>);
   const virtualLines = Array.isArray(data.virtualLines) ? data.virtualLines : [];
-  let furnaces = migrateContents(Array.isArray(data.furnaces) ? data.furnaces : [], data.contents, virtualLines, config);
+  const cabinets = master?.cabinets?.length ? master.cabinets : CABINETS;
+  let furnaces = migrateContents(
+    Array.isArray(data.furnaces) ? data.furnaces : [],
+    data.contents,
+    virtualLines,
+    config,
+    master,
+  );
 
   const plan: LoadedPlan = {
     date: data.date || fallback.date,
@@ -187,12 +199,12 @@ export function loadPlan(): LoadedPlan {
 
   if (plan.virtualLines.length) {
     const restored = ensureSplitFurnaces(plan.furnaces, plan.virtualLines, plan.nextFurnaceSeq);
-    plan.furnaces = migrateContents(restored.furnaces, undefined, plan.virtualLines, plan.config);
+    plan.furnaces = migrateContents(restored.furnaces, undefined, plan.virtualLines, plan.config, master);
     plan.contents = plan.furnaces;
     plan.nextFurnaceSeq = restored.nextSeq;
   }
 
-  plan.runtimes = deriveAllRuntimes(CABINETS, plan.contents || plan.furnaces, plan.runtimes || []);
+  plan.runtimes = deriveAllRuntimes(cabinets, plan.contents || plan.furnaces, plan.runtimes || []);
 
   if (isDemoSeedEnabled(plan.config) && isPlanSparse(plan.furnaces, DEMO_MIN_LOADS, DEMO_MIN_CABINETS, plan.virtualLines)) {
     plan.furnaces = [];

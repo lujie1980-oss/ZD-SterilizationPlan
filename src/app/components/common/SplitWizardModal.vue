@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { cabinetById } from '../../../data/seed-cabinets';
 import { usePlanStore } from '../../stores/planStore';
 import { useUiStore } from '../../stores/uiStore';
 
@@ -16,7 +15,7 @@ watch(
     if (!line.value) return;
     boxesA.value = Math.ceil(line.value.boxes / 2);
     cabinetId.value = line.value.allowed.find((c) => {
-      const cab = cabinetById(c);
+      const cab = plan.findCabinet(c);
       return cab && cab.status !== '报废';
     }) || '';
   },
@@ -68,8 +67,8 @@ function ok(): void {
         <div style="margin-bottom:8px">
           <span class="label">目标灭菌柜</span>
           <select id="splitCab" v-model="cabinetId" class="select" style="width:100%;margin-top:4px">
-            <option v-for="c in line.allowed" :key="c" :value="c" :disabled="!cabinetById(c) || cabinetById(c)?.status === '报废'">
-              {{ c }}{{ cabinetById(c) ? `（${cabinetById(c)!.base}基地 · ${cabinetById(c)!.capacity}m³）` : '（主数据缺失）' }}
+            <option v-for="c in line.allowed" :key="c" :value="c" :disabled="!plan.findCabinet(c) || plan.findCabinet(c)?.status === '报废'">
+              {{ c }}{{ plan.findCabinet(c) ? `（${plan.findCabinet(c)!.base}基地 · ${plan.findCabinet(c)!.capacity}m³）` : '（主数据缺失）' }}
             </option>
           </select>
         </div>
