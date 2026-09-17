@@ -3,7 +3,7 @@ import { PROCESSES } from '../../data/seed-processes';
 </script>
 
 <template>
-  <section id="page-processes" class="page active">
+  <section id="page-processes">
     <div class="card">
       <div class="card-header">
         <span>工艺与指定柜</span>

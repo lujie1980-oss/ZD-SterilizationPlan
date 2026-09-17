@@ -35,7 +35,7 @@ describe('C4-01 Vue 3 工程与关键页可指认', () => {
     expect(pkg.scripts?.build).toContain('vite build');
   });
 
-  it('入口为 createApp；路由可指认 /pool /pack /gantt /validation', () => {
+  it('入口为 createApp；路由可指认 /master /demand /pack /gantt /release（旧 path redirect）', () => {
     const main = readFileSync(join(root, 'src/main.ts'), 'utf8');
     const createAppSrc = readFileSync(join(root, 'src/app/create-app.ts'), 'utf8');
     expect(main + createAppSrc).toContain('createApp');
@@ -43,14 +43,18 @@ describe('C4-01 Vue 3 工程与关键页可指认', () => {
     expect(main).not.toContain('bootApp');
 
     const router = readFileSync(join(root, 'src/app/router/index.ts'), 'utf8');
-    expect(router).toMatch(/path:\s*['"]\/pool['"]/);
+    expect(router).toMatch(/path:\s*['"]\/master['"]/);
+    expect(router).toMatch(/path:\s*['"]\/demand['"]/);
     expect(router).toMatch(/path:\s*['"]\/pack['"]/);
     expect(router).toMatch(/path:\s*['"]\/gantt['"]/);
-    expect(router).toMatch(/path:\s*['"]\/validation['"]/);
+    expect(router).toMatch(/path:\s*['"]\/release['"]/);
     expect(router).toContain('DemandPoolView.vue');
     expect(router).toContain('PackCabinetView.vue');
     expect(router).toContain('GanttPlanView.vue');
-    expect(router).toContain('ValidationCenterView.vue');
+    expect(router).toContain('ReleaseView.vue');
+    expect(router).toMatch(/path:\s*['"]\/pool['"]/);
+    expect(router).toMatch(/path:\s*['"]\/validation['"]/);
+    expect(router).toMatch(/path:\s*['"]\/workbench['"]/);
   });
 
   it('关键页面为 .vue 且旧 src/ui 不形成可运行入口', () => {
@@ -118,18 +122,18 @@ describe('C4-01 运行时路由可打开', () => {
     localStorage.clear();
   });
 
-  it('挂载后 /pack /pool /gantt /validation 均可渲染', async () => {
+  it('挂载后 /pack /demand /gantt /release 均可渲染', async () => {
     document.body.innerHTML = '<div id="app"></div>';
     localStorage.clear();
     const { app, router } = await mountSterilizationApp();
     expect(document.querySelector('#page-grouping')).toBeTruthy();
-    await router.push('/pool');
-    await waitEl('#page-pool');
+    await router.push('/demand');
+    await waitEl('#page-demand');
     await router.push('/gantt');
     await waitEl('#page-furnace-plan');
     expect(document.querySelector('[data-testid="schedule-sort-policy"]')).toBeTruthy();
-    await router.push('/validation');
-    await waitEl('#page-validation');
+    await router.push('/release');
+    await waitEl('#page-release');
     app.unmount();
   });
 });

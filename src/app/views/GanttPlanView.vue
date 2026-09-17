@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { RouterLink } from 'vue-router';
 import { CABINETS, cabinetById } from '../../data/seed-cabinets';
 import { addDays, dayOffset, fmtDate, fmtDateTime } from '../../domain/dates';
 import type { EntryLoad } from '../../domain/entities';
@@ -130,7 +131,7 @@ function selectCab(id: string) {
   <section id="page-furnace-plan" class="page active" style="min-height:0;flex:1;overflow:hidden;padding:12px 16px">
     <div class="fp-toolbar">
       <div class="fp-title-block">
-        <strong>进炉计划 · 工艺周期甘特</strong>
+        <strong>入炉计划 · 工艺周期甘特</strong>
         <span class="hint">进炉 → 解析 → BI（可选预热）· 按柜号进炉顺序</span>
       </div>
       <span class="label">计划起点</span>
@@ -156,15 +157,20 @@ function selectCab(id: string) {
       <span class="fp-leg"><i class="fp-swatch" style="background:#52c41a" />BI</span>
       <span class="fp-leg"><i class="fp-swatch conflict" />灭菌重叠冲突</span>
       <span class="hint">解析/BI 天数来自工艺主数据示意，P0 待确认处标黄</span>
-      <span id="fpWarnBadge" class="tag tag-pending" :style="{ display: plan.fpConflicts.length ? '' : 'none' }">
+      <RouterLink
+        id="fpWarnBadge"
+        class="tag tag-pending"
+        to="/release?tab=issues"
+        :style="{ display: plan.fpConflicts.length ? '' : 'none' }"
+      >
         {{ plan.fpConflicts.length }} 项校验警告
-      </span>
+      </RouterLink>
     </div>
     <div class="fp-body">
       <div id="fpGanttWrap" class="fp-gantt-wrap">
         <div id="fpGantt" class="fp-gantt" :style="{ '--day-w': DAY_W + 'px' }">
           <template v-if="!cabIds.length">
-            <div class="fp-empty"><div class="emoji">📭</div><div>暂无装炉结果</div><div class="hint">请先在日排产工作台分配炉次，或点击「同步装炉结果」加载演示数据</div></div>
+            <div class="fp-empty"><div class="emoji">📭</div><div>暂无装炉结果</div><div class="hint">请先在组柜优化完成装柜，或点击「同步装炉结果」加载演示数据</div></div>
           </template>
           <template v-else>
             <div class="fp-axis-corner">柜号 / 基地</div>

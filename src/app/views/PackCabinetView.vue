@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
+import { RouterLink } from 'vue-router';
 import { CABINETS, cabinetById, traysForCabinet, usableCabinets } from '../../data/seed-cabinets';
 import { trayCapacityM3 } from '../../domain/cabinet-content';
 import { listCandidateCabinets, listEligibleForCabinet } from '../../domain/grouping';
@@ -117,6 +118,16 @@ const modeBanner = computed(() => {
   return null;
 });
 
+const batchIssues = computed(() => {
+  const id = cabId.value;
+  if (!id) return [];
+  const content = plan.furnaces.find((f) => f.cabinetId === id && !f.hidden);
+  if (!content) return [];
+  return validateFurnace(content, plan.ruleCtx([content])).filter(
+    (i) => i.sev === 'error' || GROUPING_ISSUE_CODES.has(i.code),
+  );
+});
+
 function runtimeHtml(status: RuntimeStatus): string {
   return groupingRuntimeTagsHtml(status);
 }
@@ -152,6 +163,17 @@ function isCabDisabled(id: string): boolean {
       <span class="hint">组柜不按结果日或班次筛选 · 完成后未排</span>
     </div>
     <PackPolicyPanel />
+    <div id="grpValidationSummary" class="grp-val-summary" data-testid="pack-validation-summary">
+      <div class="grp-val-summary-hd">
+        <strong>本批校验</strong>
+        <span class="hint">{{ batchIssues.length }} 项 · 不占一级菜单</span>
+        <RouterLink class="btn btn-sm" to="/release?tab=issues">在结果发布查看</RouterLink>
+      </div>
+      <div v-if="!batchIssues.length" class="hint">当前柜无本批硬错误；按结果日全量请到结果发布</div>
+      <div v-for="i in batchIssues.slice(0, 4)" :key="i.code + (i.furnaceId || '')" class="hint">
+        {{ i.code }} · {{ i.msg }}
+      </div>
+    </div>
     <div
       id="grpModeBanner"
       class="strong-banner"

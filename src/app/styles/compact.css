@@ -580,6 +580,13 @@ table.data input[type=checkbox] { cursor: pointer; width: 14px; height: 14px; }
   font-size: 12px; color: var(--text-secondary); background: #f6ffed;
   border: 1px solid #b7eb8f; border-radius: 6px; padding: 6px 10px;
 }
+.grp-val-summary {
+  background: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px 12px; flex-shrink: 0;
+}
+.grp-val-summary-hd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.grp-val-summary a.btn { text-decoration: none; }
+a.tag { text-decoration: none; }
 .fp-sort-policy { flex-shrink: 0; }
 .fp-sort-preview { font-size: 13px; margin-bottom: 8px; }
 .fp-sort-list { width: 100%; }

@@ -72,24 +72,17 @@ function gotoGantt() {
 }
 
 function runValidate() {
-  void router.push('/validation');
+  void router.push({ path: '/release', query: { tab: 'issues' } });
   plan.refreshValidationLoads();
 }
 </script>
 
 <template>
-  <section id="page-workbench" class="page active" style="min-height:0;flex:1;overflow:hidden">
+  <section id="page-workbench" style="min-height:0;flex:1;overflow:hidden;display:flex;flex-direction:column;gap:var(--space-sm)">
     <div class="config-bar" style="margin-bottom:0">
-      <span class="tag tag-pending">过渡</span>
-      <span class="hint">组柜主路径已迁至侧栏「组柜」。本页日期/班次只过滤<strong>已排期</strong>结果，不作为组柜前置；未排载荷请到组柜查看。</span>
+      <span class="hint">本页按<strong>上线日</strong>（甘特写回）过滤已排期结果，不作为组柜前置；未排载荷请到「组柜优化」查看。</span>
     </div>
     <div class="wb-toolbar">
-      <span class="label">结果日</span>
-      <input id="wbDate" class="input" type="date" :value="plan.date" title="仅过滤已排期炉次，不参与组柜" @change="plan.setDate(($event.target as HTMLInputElement).value)" />
-      <div id="wbShiftTabs" class="shift-tabs">
-        <div class="shift-tab" :class="{ active: plan.shift === '白班' }" data-shift="白班" @click="plan.setShift('白班')">白班</div>
-        <div class="shift-tab" :class="{ active: plan.shift === '夜班' }" data-shift="夜班" @click="plan.setShift('夜班')">夜班</div>
-      </div>
       <div id="scheduleModeTabs" class="shift-tabs" title="自动排产：error 拒绝落盘；手工调整：允许 error 并标手工违例">
         <div class="shift-tab" :class="{ active: plan.scheduleMode === 'auto' }" data-mode="auto" @click="plan.setScheduleMode('auto')">自动排产</div>
         <div class="shift-tab" :class="{ active: plan.scheduleMode === 'manual' }" data-mode="manual" @click="plan.setScheduleMode('manual')">手工调整</div>
@@ -104,7 +97,7 @@ function runValidate() {
       <button id="btnSuggest" class="btn btn-warning" type="button" @click="plan.suggestCombine()">建议拼炉</button>
       <button id="btnSplit" class="btn" type="button" @click="plan.openSplitWizard()">拆炉向导</button>
       <button id="btnValidate" class="btn btn-success" type="button" @click="runValidate()">运行校验</button>
-      <button id="btnGotoFurnacePlan" class="btn" type="button" title="同步装炉结果并查看多日工艺周期甘特" @click="gotoGantt()">查看进炉计划甘特</button>
+      <button id="btnGotoFurnacePlan" class="btn" type="button" title="同步装炉结果并查看多日工艺周期甘特" @click="gotoGantt()">查看入炉计划甘特</button>
     </div>
     <div class="config-bar">
       <span class="tag tag-pending">P0 待确认</span>
@@ -129,7 +122,7 @@ function runValidate() {
       role="alert"
     >
       <template v-if="errFurnaces.length && plan.scheduleMode === 'manual'">
-        手工违例：当前班次存在硬错误，已允许保存。建议填写违例原因。请到校验中心查看（可筛「仅手工违例」）。
+        手工违例：当前班次存在硬错误，已允许保存。建议填写违例原因。请到本页「校验问题」查看（可筛「仅手工违例」）。
       </template>
       <template v-else-if="errFurnaces.length">
         需手工处理或改回合法：自动排产模式下这些炉次含硬错误，新的自动写入（含建议拼炉）若仍有 error 将被拒绝。

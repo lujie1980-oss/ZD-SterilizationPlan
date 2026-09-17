@@ -8,19 +8,19 @@ const plan = usePlanStore();
 const router = useRouter();
 onMounted(() => plan.refreshValidationLoads());
 
-const raw = computed(() => plan.collectIssues());
+const raw = computed(() => plan.collectReleaseIssues());
 const issues = computed(() => filterAndSortIssues(raw.value, plan.furnaces, plan.valFilter));
 const viol = computed(() => new Set(plan.furnaces.filter((f) => f.manualViolation).map((f) => f.id)));
 
 function jump(furnaceId?: string) {
   if (!furnaceId) return;
   plan.selectedFurnaceId = furnaceId;
-  void router.push('/workbench');
+  void router.push({ path: '/release' });
 }
 </script>
 
 <template>
-  <section id="page-validation" class="page active">
+  <section id="page-validation">
     <div class="stat-row">
       <div class="stat-box"><div id="valErr" class="num" style="color:var(--error)">{{ raw.filter((i) => i.sev === 'error').length }}</div><div class="lbl">错误</div></div>
       <div class="stat-box"><div id="valWarn" class="num" style="color:var(--warning)">{{ raw.filter((i) => i.sev === 'warning').length }}</div><div class="lbl">警告</div></div>
@@ -28,7 +28,7 @@ function jump(furnaceId?: string) {
     </div>
     <div class="card">
       <div class="card-header" style="flex-wrap:wrap;gap:8px">
-        <span>当前班次校验问题</span>
+        <span>该结果日校验问题（上线日）</span>
         <div id="valFilterTabs" class="shift-tabs">
           <div class="shift-tab" :class="{ active: plan.valFilter === 'all' }" data-val-filter="all" @click="plan.valFilter = 'all'">全部</div>
           <div class="shift-tab" :class="{ active: plan.valFilter === 'error' }" data-val-filter="error" @click="plan.valFilter = 'error'">仅 error</div>
@@ -40,8 +40,8 @@ function jump(furnaceId?: string) {
         <div id="issueList" class="issue-list">
           <div v-if="!issues.length" class="empty">
             <div class="emoji">✅</div>
-            <div>{{ raw.length ? '当前筛选下无条目' : '当前班次无校验问题' }}</div>
-            <div class="hint">在工作台分配炉次后点击「运行校验」</div>
+            <div>{{ raw.length ? '当前筛选下无条目' : '该结果日无校验问题' }}</div>
+            <div class="hint">未排期 Content 不进入该日校验；组柜本批问题见组柜优化页内摘要</div>
           </div>
           <div
             v-for="(i, idx) in issues"
@@ -60,7 +60,7 @@ function jump(furnaceId?: string) {
             <div class="issue-body">
               <div class="msg">{{ i.msg }}</div>
               <div class="meta">
-                代码 {{ i.code }}{{ i.furnaceId ? ` · 炉次 ${i.furnaceId}` : '' }}{{ i.pendingFlag ? ' · 待确认' : '' }}{{ i.scheduleModeAtDetect ? ` · 检测时 ${i.scheduleModeAtDetect === 'manual' ? '手工调整' : '自动排产'}` : '' }} · 点击跳转工作台
+                代码 {{ i.code }}{{ i.furnaceId ? ` · 炉次 ${i.furnaceId}` : '' }}{{ i.pendingFlag ? ' · 待确认' : '' }}{{ i.scheduleModeAtDetect ? ` · 检测时 ${i.scheduleModeAtDetect === 'manual' ? '手工调整' : '自动排产'}` : '' }} · 点击跳转已排期列表
               </div>
             </div>
           </div>

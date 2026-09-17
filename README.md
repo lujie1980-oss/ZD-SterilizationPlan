@@ -1,6 +1,6 @@
 # 振德医疗 · 灭菌中心排产 MVP
 
-许昌灭菌中心 EO 自有柜：**待灭菌合格库存 → 组柜（未排）→ 进炉甘特写回上线日期**。本仓库为 **Vue 3 + Vue Router + Pinia**（Vite）SPA，对齐领域模型 v1.1 与变更-1/2/3；变更-4 整仓切 Vue 并采用中度紧凑 UI。演示种子数据，无真实 SAP/WMS 后端。
+许昌灭菌中心 EO 自有柜：**待灭菌合格库存 → 组柜（未排）→ 入炉甘特写回上线日期**。本仓库为 **Vue 3 + Vue Router + Pinia**（Vite）SPA，对齐领域模型 v1.1 与变更-1/2/3；变更-4 整仓切 Vue 并采用中度紧凑 UI；变更-5 将侧栏收成五级业务导航。演示种子数据，无真实 SAP/WMS 后端。
 
 ## 运行
 
@@ -31,7 +31,7 @@ docker compose up -d --build
 
 浏览器打开：**http://127.0.0.1:18080/**
 
-默认端口：本机 **18080** → 容器 **80**（nginx，`try_files` SPA fallback）。history 路由直接刷新 `/pack` `/gantt` 等不应 404。
+默认端口：本机 **18080** → 容器 **80**（nginx，`try_files` SPA fallback）。history 路由直接刷新 `/demand` `/pack` `/gantt` `/release` 等不应 404。
 
 停止并删除本 compose 容器：
 
@@ -41,46 +41,47 @@ docker compose down
 
 若本机 **18080** 已被占用，把 `docker-compose.yml` 的 `ports` 改为备用端口 **28080** 后重新 `--build`，打开 http://127.0.0.1:28080/ 。
 
-## 路由（变更-4）
+## 路由（变更-5 五级导航）
 
-| 路径 | 页面 |
-|------|------|
-| `/pack` | 组柜 |
-| `/workbench` | 已排期浏览（过渡） |
-| `/gantt` | 进炉计划 |
-| `/pool` | 待灭菌可排池 |
-| `/validation` | 校验中心 |
-| `/cabinets` `/processes` `/boxspecs` | 主数据 |
+| 路径 | 侧栏 | 页面 |
+|------|------|------|
+| `/master` | 基础数据维护 | 灭菌柜 / 工艺与允许柜 / 箱规（子路由） |
+| `/demand` | 待排产需求确认 | 原待灭菌可排池 |
+| `/pack` | 组柜优化 | 双入口组柜、建议策略、双模式；页内本批校验摘要 |
+| `/gantt` | 入炉计划 | 甘特、排序策略、同步建 Task |
+| `/release` | 结果发布 | 已排期列表、**页内**结果日、**页内**导出日计划 CSV、校验问题 |
 
-默认进入 `/pack`。中度紧凑令牌见 `src/app/styles/tokens.css`（侧栏 168px、表行 30px、顶栏 40px、控件 28px）。视觉对照 8088 原型仅作密度参考，**不以原型为实现结论**。
+默认进入 `/demand`。旧 path 重定向：`/pool`→`/demand`，`/workbench`→`/release`，`/validation`→`/release?tab=issues`，`/cabinets|processes|boxspecs`→`/master/…`。全局顶栏**不再**放结果日 / 导出 CSV。
+
+中度紧凑令牌见 `src/app/styles/tokens.css`（侧栏 168px、表行 30px、顶栏 40px、控件 28px）。视觉对照 8088 原型仅作密度参考，**不以原型为实现结论**。
 
 ## 演示路径（验收）
 
-1. **组柜（变更-1 主路径）**
-   1. 侧栏「组柜」默认进入。入口 **选柜 / 选需求**，无上线日期筛选、无白夜班切换。
+1. **组柜优化（变更-1 主路径）**
+   1. 侧栏「组柜优化」`/pack`。入口 **选柜 / 选需求**，无上线日期筛选、无白夜班切换。页内可看本批校验摘要，链到结果发布。
    2. **选柜**：点柜 9 → 完整可进列表分栏「已进本柜 / 还可排入 / 已进其他柜」；灭菌中柜（演示柜14）灰显禁用但仍可见。
    3. 点「自动组柜」：按当前 **建议策略**（默认填满优先 80%、交期簇关）挑行；可见分层（托盘主数据）→ 装柜；柜卡「未排」，`date/shift=null`，**不建 CabinetTask**。层体积超过 `Tray.capacityM3` 时分层卡片显示红色「超托盘」且 `TRAY_OVERFLOW` error（C1-28：auto 拒绝落盘，手工可落盘+强预警）；装柜率分母仍为柜 `ratedLoadM3`。
    4. **建议策略面板**：预设（填满优先 / 交期簇优先 / 多柜均衡 / 自定义）、先填满一台 vs 多柜均衡、目标装柜率 70%～95%、交期簇开关与窗口天数。点「保存策略」只写入 `config.packSuggestPolicy`，**不**改写已有载荷；点「自动组柜」才按新策略重算。「恢复默认」回到填满优先 80% + 交期窗 3 天 + 交期簇关。硬约束与双模式不可配掉。
    5. **选需求**：单击行只查看可组柜列表（不勾选）；勾选框才进入多选批量。自动组柜按策略为行选柜（填满优先集中一台，多柜均衡分散）。
    6. 自动模式 error 不落盘；手工调整可违例。FactStrip / 自动|手工闸门（二期 A）仍在。
-   7. **C1-31 装填完毕**：点「装填完毕」后柜为待入炉（不当空闲）。自动排产再拼 **拒绝落盘**；切「手工调整」可再拼，组柜红条 + 校验中心 `REPACK_AFTER_LOAD_COMPLETE`。
+   7. **C1-31 装填完毕**：点「装填完毕」后柜为待入炉（不当空闲）。自动排产再拼 **拒绝落盘**；切「手工调整」可再拼，组柜红条 + 结果发布校验段 `REPACK_AFTER_LOAD_COMPLETE`。
    8. **C1-40 OnTray 分量**：写入箱数/体积不得超过该 StockLine 剩余可排量（已占用 OnTray 之和）；超量 `ON_TRAY_QTY_OVERFLOW` 拒绝自动落盘。
-2. **已排期浏览（过渡）**：原日排产工作台。顶部日期只过滤**已排期**结果，不作为组柜前置。
+2. **结果发布 · 已排期列表**：原日排产工作台迁入 `/release`。页内结果日只过滤**已排期**（上线日，甘特写回），不作为组柜前置；`date=null` 未排期不进该日视图与默认 CSV。
 3. **建议拼炉**：将未分配 D002 装入柜 9（策略 `D002_CAB9_DEMO`），结果为未排。
 4. **拆炉向导（场景 A / TC-SPLIT-02）**
-   1. 过渡页选日期/白班，点「拆炉向导」（演示行 P004 带「需拆炉」）。
+   1. 结果发布页选日期/白班，点「拆炉向导」（演示行 P004 带「需拆炉」）。
    2. 确认拆为 A/B 并分配到目标柜。
    3. 工作台应出现炉次载荷 `P004-A` / `P004-B`。
    4. **硬刷新**（F5）。炉次 `*-A`/`*-B` 仍在；DevTools → Application → Local Storage → `zhende_sterilization_plan_v2` 含 `virtualLines`（`id`/`splitOf`）。
    5. 有拆炉会话时**不会**被演示稀疏重种清掉炉次。
-5. **进炉计划**：同步装炉结果 → **才创建 CabinetTask 链**（prev/next/FirstTask/IsFirst）并写回 date/shift/seq → 甘特分段条。交期 `due` 不变。**排序策略**面板可调核心键（上线日期 / 班次 / 体积）的序与升降，并可启用交期 / 加急 / 装柜率；保存只写 `config.scheduleSortPolicy`，**下次「同步装炉结果」才重排该柜链**。恢复默认 = `date↑ → shift↑ → volume↓ → id↑`。未排 Content 靠后。铁律不可配：按柜建链 · 不改交期 · 组柜不建 Task。
-6. **校验中心 / 主数据**：错误跳转炉次；柜 21、亚澳、EO 通用带琥珀色「待确认」。灭菌柜页展示额定装载 `ratedLoadM3` 与托盘层数。
-7. **导出**：顶栏「导出日计划 CSV」（进炉页/组柜页隐藏）；UTF-8 BOM；**未排载荷默认不含**。
-8. **D002 最低拼载（v1.2）**：过渡页「D002 最低拼载 (m³)」改为 `30` 后立刻影响校验与建议拼炉目标。约 40m³ 的 D002 分到柜 9 → `D002_MIN` 按 **30** 判定；改回 `50` 后低于 50 再告警。正式字段 `config.minLoadM3ByProcess.D002`，旧字段 `d002MinLoadM3` 读入迁移。
-9. **二期 A · 池事实标注（REQ-2.1）**：组柜需求行、过渡页可排池与「待灭菌可排池」行内 **FactStrip**（交期临近/逾期、指定柜是/否+柜列表、适用规则芯片）。只读派生，不跑全量校验；点击打开说明抽屉，不代替校验中心。
-10. **二期 A · 双模式约束（REQ-2.5）**：组柜与过渡页「自动排产 | 手工调整」写入 `config.scheduleMode`（默认 `auto`，刷新不丢）。
+5. **入炉计划**：同步装炉结果 → **才创建 CabinetTask 链**（prev/next/FirstTask/IsFirst）并写回 date/shift/seq → 甘特分段条。交期 `due` 不变。**排序策略**面板可调核心键（上线日期 / 班次 / 体积）的序与升降，并可启用交期 / 加急 / 装柜率；保存只写 `config.scheduleSortPolicy`，**下次「同步装炉结果」才重排该柜链**。恢复默认 = `date↑ → shift↑ → volume↓ → id↑`。未排 Content 靠后。铁律不可配：按柜建链 · 不改交期 · 组柜不建 Task。
+6. **结果发布 · 校验问题 / 基础数据维护**：校验不再占一级菜单；按结果日看问题，错误跳转已排期炉次。主数据在 `/master`（柜 21、亚澳、EO 通用琥珀色「待确认」；灭菌柜页展示额定装载 `ratedLoadM3` 与托盘层数）。
+7. **导出**：仅结果发布页内「导出日计划 CSV」；UTF-8 BOM；**未排载荷默认不含**。
+8. **D002 最低拼载（v1.2）**：结果发布页「D002 最低拼载 (m³)」改为 `30` 后立刻影响校验与建议拼炉目标。约 40m³ 的 D002 分到柜 9 → `D002_MIN` 按 **30** 判定；改回 `50` 后低于 50 再告警。正式字段 `config.minLoadM3ByProcess.D002`，旧字段 `d002MinLoadM3` 读入迁移。
+9. **二期 A · 池事实标注（REQ-2.1）**：组柜需求行、结果发布可排池与「待排产需求确认」行内 **FactStrip**（交期临近/逾期、指定柜是/否+柜列表、适用规则芯片）。只读派生，不跑全量校验；点击打开说明抽屉，不代替结果发布校验段。
+10. **二期 A · 双模式约束（REQ-2.5）**：组柜优化与结果发布「自动排产 | 手工调整」写入 `config.scheduleMode`（默认 `auto`，刷新不丢）。
    - **自动排产**：分配 / 改柜 / 拆炉确认 / 自动组柜若 `sev==='error'` → **拒绝落盘**（toast）。
-   - **手工调整**：允许 error 落盘；炉卡红条「手工违例」；校验中心强预警；「违例原因（建议填写）」写入 `config.overrideNotes[furnaceId]`，**空原因不阻断**。
+   - **手工调整**：允许 error 落盘；炉卡红条「手工违例」；结果发布校验段强预警；「违例原因（建议填写）」写入 `config.overrideNotes[furnaceId]`，**空原因不阻断**。
    - **建议拼炉**无论 UI 模式，内部 `editSource='auto'`，有 error **整次回滚**。
    - 切回 auto 不清除已有炉次；含 error 的炉次标「需手工处理或改回合法」，新的自动写入仍禁止 error。
 
@@ -93,14 +94,14 @@ src/
   persistence/
     plan-store-v2.ts     # localStorage zhende_sterilization_plan_v2（contents 双写 furnaces）
   app/
-    router/              # /pack /gantt /pool /validation …
+    router/              # /master /demand /pack /gantt /release（旧 path redirect）
     stores/planStore.ts  # persistence + domain 命令唯一入口（.vue 不碰 localStorage）
     stores/uiStore.ts    # 侧栏折叠、toast、抽屉
-    views/               # PackCabinet / GanttPlan / DemandPool / ValidationCenter …
+    views/               # MasterData / DemandPool / PackCabinet / GanttPlan / Release …
     styles/tokens.css    # 中度紧凑密度令牌（镜像 8088 原型 :root）
 ```
 
-侧栏：组柜 `/pack` · 已排期浏览 `/workbench` · 进炉计划 `/gantt` · 待灭菌可排池 `/pool` · 灭菌柜 · 工艺与指定柜 · 箱规 · 校验中心 `/validation`。
+侧栏仅五项：基础数据维护 `/master` · 待排产需求确认 `/demand` · 组柜优化 `/pack` · 入炉计划 `/gantt` · 结果发布 `/release`。
 
 ## 持久化（plan v2）
 

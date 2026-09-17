@@ -3,7 +3,7 @@ import { CABINETS, traysForCabinet } from '../../data/seed-cabinets';
 </script>
 
 <template>
-  <section id="page-cabinets" class="page active">
+  <section id="page-cabinets">
     <div class="card">
       <div class="card-header">
         <span>灭菌柜主数据（子集演示）</span>

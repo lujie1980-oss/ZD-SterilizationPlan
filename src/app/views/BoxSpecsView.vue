@@ -10,7 +10,7 @@ const d002Min = computed(() => effectiveMinLoadM3('D002', plan.config, PROCESSES
 </script>
 
 <template>
-  <section id="page-boxspecs" class="page active">
+  <section id="page-boxspecs">
     <div class="stat-row">
       <div class="stat-box"><div id="boxSpecConcept" class="num">{{ BOX_SPEC_CONCEPT_COUNT }}</div><div class="lbl">箱规种类（概念数）</div></div>
       <div class="stat-box"><div id="boxSpecSample" class="num">{{ BOX_SPECS.length }}</div><div class="lbl">本页样例</div></div>

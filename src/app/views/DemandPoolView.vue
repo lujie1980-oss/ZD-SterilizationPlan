@@ -14,7 +14,7 @@ const urgent = computed(() => eligible.value.filter((p) => p.urgent).length);
 </script>
 
 <template>
-  <section id="page-pool" class="page active">
+  <section id="page-demand" class="page active">
     <div class="stat-row">
       <div class="stat-box"><div id="poolStatTotal" class="num">{{ eligible.length }}</div><div class="lbl">待排行数</div></div>
       <div class="stat-box"><div id="poolStatVol" class="num">{{ totalVol }}</div><div class="lbl">合计体积 m³</div></div>
@@ -22,7 +22,7 @@ const urgent = computed(() => eligible.value.filter((p) => p.urgent).length);
     </div>
     <div class="card" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
       <div class="card-header">
-        <span>待灭菌可排池 · 演示数据（模拟合格待灭菌库存）</span>
+        <span>待排产需求确认 · 演示数据（模拟合格待灭菌库存）</span>
         <span class="tag tag-pending">可排条件待确认 · 非限制 ∧ 待灭菌仓 ∧ EO</span>
       </div>
       <div class="card-body table-wrap" style="padding:0;flex:1;overflow:auto">

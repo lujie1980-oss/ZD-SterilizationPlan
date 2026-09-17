@@ -367,6 +367,21 @@ export const usePlanStore = defineStore('plan', {
       );
       return [...scheduledIssues, ...groupingIssues, ...this.fpConflicts];
     },
+    /** 结果发布：按上线日（甘特写回）筛已排期问题；排除 date=null 组柜本批码 */
+    collectReleaseIssues(): ValidationIssue[] {
+      const scheduled = currentFurnaces(this.furnaces, this.date, this.shift);
+      const scheduledIssues = collectFurnaceIssues(scheduled, this.ruleCtx(scheduled), this.scheduleMode);
+      const datedConflicts = this.fpConflicts.filter((i) => {
+        if (i.furnaceId) {
+          const fu = this.furnaces.find((f) => f.id === i.furnaceId);
+          return fu?.date === this.date && fu?.shift === this.shift;
+        }
+        return this.fpLoads.some(
+          (l) => l.date === this.date && l.shift === this.shift && (!i.cabinetId || l.cabinetId === i.cabinetId),
+        );
+      });
+      return [...scheduledIssues, ...datedConflicts];
+    },
     refreshValidationLoads(): void {
       const built = buildEntryLoads({
         furnaces: this.furnaces,
