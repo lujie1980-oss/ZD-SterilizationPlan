@@ -60,7 +60,10 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
 
   const { largeBoxVol, maxBoxesWhenLarge } = ctx.config.box;
   // v1.3 / 口径 2：只统计大箱箱数合计，炉总箱数不触发 BOX_LIMIT
-  const largeBoxes = largeBoxCount(lines, largeBoxVol);
+  // 变更-7：有托盘装载时按 PlanUnit 计（每单元 vol≥阈值计 1）
+  const largeBoxes = f.trays?.length
+    ? f.trays.reduce((s, t) => s + (t.largeBoxes || 0), 0)
+    : largeBoxCount(lines, largeBoxVol);
   if (largeBoxes > maxBoxesWhenLarge) {
     issues.push({
       sev: 'error',
@@ -178,9 +181,23 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
 
   const peers = (ctx.allContents ?? ctx.sameShiftFurnaces).filter((c) => !c.hidden);
   if (f.trays?.length) {
+    const seenUnits = new Set<string>();
     const seen = new Set<string>();
     for (const tray of f.trays) {
       for (const row of tray.onTray || []) {
+        if (row.planUnitId) {
+          if (seenUnits.has(row.planUnitId)) {
+            issues.push({
+              sev: 'error',
+              code: ISSUE_CODES.ON_TRAY_QTY_OVERFLOW,
+              msg: `${row.planUnitId} 计划单元重复装载`,
+              furnaceId: f.id,
+              lineId: row.stockLineId,
+              cabinetId: f.cabinetId,
+            });
+          }
+          seenUnits.add(row.planUnitId);
+        }
         if (!row.stockLineId || seen.has(row.stockLineId)) continue;
         seen.add(row.stockLineId);
         const line = ctx.poolById(row.stockLineId);
@@ -199,6 +216,24 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
             lineId: line.id,
             cabinetId: f.cabinetId,
           });
+        }
+      }
+    }
+    for (const peer of peers) {
+      if (peer.id === f.id) continue;
+      for (const tray of peer.trays || []) {
+        for (const row of tray.onTray || []) {
+          if (!row.planUnitId) continue;
+          if (seenUnits.has(row.planUnitId)) {
+            issues.push({
+              sev: 'error',
+              code: ISSUE_CODES.ON_TRAY_QTY_OVERFLOW,
+              msg: `${row.planUnitId} 计划单元重复装载`,
+              furnaceId: f.id,
+              lineId: row.stockLineId,
+              cabinetId: f.cabinetId,
+            });
+          }
         }
       }
     }

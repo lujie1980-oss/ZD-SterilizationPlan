@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { RouterLink } from 'vue-router';
-import { trayCapacityM3 } from '../../domain/cabinet-content';
-import { listCandidateCabinets, listEligibleForCabinet } from '../../domain/grouping';
+import { remainingBoxes, trayCapacityM3 } from '../../domain/cabinet-content';
+import { listCandidateCabinets, listEligiblePlanUnitGroups, type EligibleDemandGroup } from '../../domain/grouping';
 import { validateFurnace } from '../../domain/rule-engine';
-import type { EligibleDemandRow, RuntimeStatus } from '../../domain/entities';
+import type { RuntimeStatus } from '../../domain/entities';
 import FactStrip from '../components/facts/FactStrip.vue';
 import PackPolicyPanel from '../components/pack/PackPolicyPanel.vue';
 import {
@@ -23,21 +23,22 @@ onMounted(() => plan.enterGrouping());
 const runtimes = computed(() => plan.currentRuntimes());
 const cabId = computed(() => plan.grpSelectedCabinetId);
 
-const eligibleRows = computed((): EligibleDemandRow[] => {
+const eligibleGroups = computed((): EligibleDemandGroup[] => {
   if (!cabId.value) return [];
-  return listEligibleForCabinet({
+  return listEligiblePlanUnitGroups({
     cabinetId: cabId.value,
     pool: plan.eligiblePool(),
     contents: plan.furnaces,
     cabinets: plan.masterCabinets,
     config: plan.config,
+    planUnits: plan.planUnits,
   });
 });
 
 const groups = computed(() => ({
-  inThisCabinet: eligibleRows.value.filter((r) => r.placement === 'inThisCabinet'),
-  unassigned: eligibleRows.value.filter((r) => r.placement === 'unassigned'),
-  inOtherCabinet: eligibleRows.value.filter((r) => r.placement === 'inOtherCabinet'),
+  inThisCabinet: eligibleGroups.value.filter((r) => r.placement === 'inThisCabinet'),
+  unassigned: eligibleGroups.value.filter((r) => r.placement === 'unassigned'),
+  inOtherCabinet: eligibleGroups.value.filter((r) => r.placement === 'inOtherCabinet'),
 }));
 
 const emptyUnassignedHint = computed(() =>
@@ -76,7 +77,7 @@ const layer = computed(() => {
           vol: 0,
           boxes: 0,
           largeBoxes: 0,
-          onTray: [] as { stockLineId: string }[],
+          onTray: [] as { stockLineId: string; planUnitId?: string }[],
           id: t.id,
           contentId: '',
         }))
@@ -85,7 +86,10 @@ const layer = computed(() => {
     .sort((a, b) => b.level - a.level)
     .map((t) => {
       const md = trays.find((x) => x.id === t.trayId);
-      const names = (t.onTray || []).map((o) => o.stockLineId).join('、') || '空层';
+      const names =
+        (t.onTray || [])
+          .map((o) => o.planUnitId || o.stockLineId)
+          .join('、') || '空层';
       const cap = trayCapacityM3(md);
       const overChip = trayOverChip(t.vol, cap);
       return { t, md, names, cap, overChip };
@@ -142,6 +146,18 @@ function rtOf(id: string) {
 function isCabDisabled(id: string): boolean {
   const status = rtOf(id)?.status || 'idle';
   return status === 'sterilizing' || status === 'outOfService';
+}
+
+function remainOf(lineId: string): number {
+  const line = plan.poolById(lineId);
+  if (!line) return 0;
+  return remainingBoxes(line, plan.furnaces, undefined, plan.planUnits);
+}
+
+function groupExpanded(lineId: string): boolean {
+  const units = plan.unitsOfDemand(lineId);
+  if (units.length <= 12) return true;
+  return plan.grpExpandedDemandIds.includes(lineId);
 }
 </script>
 
@@ -205,7 +221,7 @@ function isCabDisabled(id: string): boolean {
           </div>
         </div>
         <div class="grp-col">
-          <div class="grp-col-hd">完整可进需求</div>
+          <div class="grp-col-hd">完整可进需求（按行分组 · 勾选计划单元）</div>
           <div class="grp-scroll">
             <template v-if="cabId">
               <div class="grp-part">
@@ -214,16 +230,42 @@ function isCabDisabled(id: string): boolean {
                 <div
                   v-for="r in groups.inThisCabinet"
                   :key="r.lineId"
-                  class="grp-demand"
-                  :class="{ selected: plan.grpCheckedDemandIds.includes(r.lineId) }"
+                  class="grp-demand-group"
                   :data-grp-demand-view="r.lineId"
-                  @click="plan.focusGroupingDemand(r.lineId)"
                 >
-                  <input type="checkbox" :data-grp-check="r.lineId" :checked="plan.grpCheckedDemandIds.includes(r.lineId)" @click.stop @change="plan.checkGroupingDemand(r.lineId, ($event.target as HTMLInputElement).checked)" />
-                  <div>
-                    <div><strong class="mono">{{ r.lineId }}</strong> <span v-html="placementChip(r.placement, r.otherCabinetId)" /> {{ r.line.name }}</div>
-                    <div class="sub">{{ r.line.vol }} m³ · SO {{ r.line.salesOrderNo || r.line.wo }} · {{ r.line.dimL || '—' }}×{{ r.line.dimW || '—' }}×{{ r.line.dimH || '—' }} · 交期 {{ r.line.due }}</div>
-                    <FactStrip :line="r.line" />
+                  <div
+                    class="grp-demand"
+                    :class="{ focused: plan.grpFocusedDemandId === r.lineId }"
+                    @click="plan.focusGroupingDemand(r.lineId)"
+                  >
+                    <div>
+                      <div><strong class="mono">{{ r.lineId }}</strong> <span v-html="placementChip(r.placement, r.otherCabinetId)" /> {{ r.line.name }}</div>
+                      <div class="sub">{{ r.line.vol }} m³ · 剩余 {{ remainOf(r.lineId) }} 箱 · SO {{ r.line.salesOrderNo || r.line.wo }} · 交期 {{ r.line.due }}</div>
+                      <FactStrip :line="r.line" />
+                    </div>
+                    <button v-if="r.units.length > 12" class="btn btn-sm" type="button" @click.stop="plan.toggleDemandExpand(r.lineId)">{{ groupExpanded(r.lineId) ? '收起' : `展开 ${r.units.length}` }}</button>
+                  </div>
+                  <div v-if="groupExpanded(r.lineId)" class="grp-units">
+                    <div v-if="!r.units.length" class="hint">无计划单元，请先在待排产需求确认中分拆</div>
+                    <label
+                      v-for="u in r.units"
+                      :key="u.planUnitId"
+                      class="grp-unit"
+                      :class="{ selected: plan.grpCheckedPlanUnitIds.includes(u.planUnitId) }"
+                    >
+                      <input
+                        type="checkbox"
+                        :data-grp-check="u.planUnitId"
+                        :data-stock-line="r.lineId"
+                        :checked="plan.grpCheckedPlanUnitIds.includes(u.planUnitId)"
+                        :disabled="u.placement === 'inOtherCabinet'"
+                        @click.stop
+                        @change="plan.checkGroupingPlanUnit(u.planUnitId, ($event.target as HTMLInputElement).checked)"
+                      />
+                      <span class="mono">{{ u.planUnitId }}</span>
+                      <span>第{{ u.unit.boxSeq }}箱 · {{ u.unit.vol }} m³</span>
+                      <span v-html="placementChip(u.placement, u.otherCabinetId)" />
+                    </label>
                   </div>
                 </div>
               </div>
@@ -233,16 +275,41 @@ function isCabDisabled(id: string): boolean {
                 <div
                   v-for="r in groups.unassigned"
                   :key="r.lineId"
-                  class="grp-demand"
-                  :class="{ selected: plan.grpCheckedDemandIds.includes(r.lineId) }"
+                  class="grp-demand-group"
                   :data-grp-demand-view="r.lineId"
-                  @click="plan.focusGroupingDemand(r.lineId)"
                 >
-                  <input type="checkbox" :data-grp-check="r.lineId" :checked="plan.grpCheckedDemandIds.includes(r.lineId)" @click.stop @change="plan.checkGroupingDemand(r.lineId, ($event.target as HTMLInputElement).checked)" />
-                  <div>
-                    <div><strong class="mono">{{ r.lineId }}</strong> <span v-html="placementChip(r.placement, r.otherCabinetId)" /> {{ r.line.name }}</div>
-                    <div class="sub">{{ r.line.vol }} m³ · SO {{ r.line.salesOrderNo || r.line.wo }} · {{ r.line.dimL || '—' }}×{{ r.line.dimW || '—' }}×{{ r.line.dimH || '—' }} · 交期 {{ r.line.due }}</div>
-                    <FactStrip :line="r.line" />
+                  <div
+                    class="grp-demand"
+                    :class="{ focused: plan.grpFocusedDemandId === r.lineId }"
+                    @click="plan.focusGroupingDemand(r.lineId)"
+                  >
+                    <div>
+                      <div><strong class="mono">{{ r.lineId }}</strong> <span v-html="placementChip(r.placement, r.otherCabinetId)" /> {{ r.line.name }}</div>
+                      <div class="sub">{{ r.line.vol }} m³ · 剩余 {{ remainOf(r.lineId) }} 箱 · SO {{ r.line.salesOrderNo || r.line.wo }} · 交期 {{ r.line.due }}</div>
+                      <FactStrip :line="r.line" />
+                    </div>
+                    <button v-if="r.units.length > 12" class="btn btn-sm" type="button" @click.stop="plan.toggleDemandExpand(r.lineId)">{{ groupExpanded(r.lineId) ? '收起' : `展开 ${r.units.length}` }}</button>
+                  </div>
+                  <div v-if="groupExpanded(r.lineId)" class="grp-units">
+                    <div v-if="!r.units.length" class="hint">无计划单元不可装 · 请先确认分拆</div>
+                    <label
+                      v-for="u in r.units"
+                      :key="u.planUnitId"
+                      class="grp-unit"
+                      :class="{ selected: plan.grpCheckedPlanUnitIds.includes(u.planUnitId) }"
+                    >
+                      <input
+                        type="checkbox"
+                        :data-grp-check="u.planUnitId"
+                        :data-stock-line="r.lineId"
+                        :checked="plan.grpCheckedPlanUnitIds.includes(u.planUnitId)"
+                        @click.stop
+                        @change="plan.checkGroupingPlanUnit(u.planUnitId, ($event.target as HTMLInputElement).checked)"
+                      />
+                      <span class="mono">{{ u.planUnitId }}</span>
+                      <span>第{{ u.unit.boxSeq }}箱 · {{ u.unit.vol }} m³</span>
+                      <span v-html="placementChip(u.placement, u.otherCabinetId)" />
+                    </label>
                   </div>
                 </div>
               </div>
@@ -252,15 +319,23 @@ function isCabDisabled(id: string): boolean {
                 <div
                   v-for="r in groups.inOtherCabinet"
                   :key="r.lineId"
-                  class="grp-demand"
+                  class="grp-demand-group"
                   :data-grp-demand-view="r.lineId"
-                  @click="plan.focusGroupingDemand(r.lineId)"
                 >
-                  <input type="checkbox" :data-grp-check="r.lineId" disabled />
-                  <div>
-                    <div><strong class="mono">{{ r.lineId }}</strong> <span v-html="placementChip(r.placement, r.otherCabinetId)" /> {{ r.line.name }}</div>
-                    <div class="sub">{{ r.line.vol }} m³ · SO {{ r.line.salesOrderNo || r.line.wo }} · {{ r.line.dimL || '—' }}×{{ r.line.dimW || '—' }}×{{ r.line.dimH || '—' }} · 交期 {{ r.line.due }}</div>
-                    <FactStrip :line="r.line" />
+                  <div class="grp-demand" @click="plan.focusGroupingDemand(r.lineId)">
+                    <div>
+                      <div><strong class="mono">{{ r.lineId }}</strong> <span v-html="placementChip(r.placement, r.otherCabinetId)" /> {{ r.line.name }}</div>
+                      <div class="sub">{{ r.line.vol }} m³ · SO {{ r.line.salesOrderNo || r.line.wo }} · 交期 {{ r.line.due }}</div>
+                      <FactStrip :line="r.line" />
+                    </div>
+                  </div>
+                  <div class="grp-units">
+                    <label v-for="u in r.units" :key="u.planUnitId" class="grp-unit">
+                      <input type="checkbox" :data-grp-check="u.planUnitId" :data-stock-line="r.lineId" disabled />
+                      <span class="mono">{{ u.planUnitId }}</span>
+                      <span>第{{ u.unit.boxSeq }}箱 · {{ u.unit.vol }} m³</span>
+                      <span v-html="placementChip(u.placement, u.otherCabinetId)" />
+                    </label>
                   </div>
                 </div>
               </div>
@@ -301,21 +376,47 @@ function isCabDisabled(id: string): boolean {
       </div>
       <div v-else class="grp-cols">
         <div class="grp-col">
-          <div class="grp-col-hd">选需求 · 单击查看 / 勾选批量</div>
+          <div class="grp-col-hd">选需求 · 单击查看 / 勾选计划单元</div>
           <div class="grp-scroll">
             <div
               v-for="p in demandPool"
               :key="p.id"
-              class="grp-demand"
-              :class="{ focused: plan.grpFocusedDemandId === p.id, selected: plan.grpCheckedDemandIds.includes(p.id) }"
+              class="grp-demand-group"
               :data-grp-demand-view="p.id"
-              @click="plan.focusGroupingDemand(p.id)"
             >
-              <input type="checkbox" :data-grp-check="p.id" :checked="plan.grpCheckedDemandIds.includes(p.id)" @click.stop @change="plan.checkGroupingDemand(p.id, ($event.target as HTMLInputElement).checked)" />
-              <div>
-                <div><strong class="mono">{{ p.id }}</strong> {{ p.name }} <span v-if="p.urgent" class="tag tag-urgent">加急</span></div>
-                <div class="sub">{{ p.vol }} m³ · SO {{ p.salesOrderNo || p.wo }} · {{ p.dimL || '—' }}×{{ p.dimW || '—' }}×{{ p.dimH || '—' }} · 允许 {{ p.allowed.join(',') }}</div>
-                <FactStrip :line="p" />
+              <div
+                class="grp-demand"
+                :class="{ focused: plan.grpFocusedDemandId === p.id }"
+                @click="plan.focusGroupingDemand(p.id)"
+              >
+                <div>
+                  <div><strong class="mono">{{ p.id }}</strong> {{ p.name }} <span v-if="p.urgent" class="tag tag-urgent">加急</span></div>
+                  <div class="sub">{{ p.vol }} m³ · 剩余 {{ remainOf(p.id) }} 箱 · SO {{ p.salesOrderNo || p.wo }} · 允许 {{ p.allowed.join(',') }}</div>
+                  <FactStrip :line="p" />
+                </div>
+                <button v-if="plan.unitsOfDemand(p.id).length > 12" class="btn btn-sm" type="button" @click.stop="plan.toggleDemandExpand(p.id)">{{ groupExpanded(p.id) ? '收起' : `展开 ${plan.unitsOfDemand(p.id).length}` }}</button>
+              </div>
+              <div v-if="groupExpanded(p.id)" class="grp-units">
+                <div v-if="!plan.unitsOfDemand(p.id).length" class="hint">无计划单元不可装 · 请先确认分拆</div>
+                <label
+                  v-for="u in plan.unitsOfDemand(p.id)"
+                  :key="u.id"
+                  class="grp-unit"
+                  :class="{ selected: plan.grpCheckedPlanUnitIds.includes(u.id) }"
+                >
+                  <input
+                    type="checkbox"
+                    :data-grp-check="u.id"
+                    :data-stock-line="p.id"
+                    :checked="plan.grpCheckedPlanUnitIds.includes(u.id)"
+                    :disabled="u.status === 'placed'"
+                    @click.stop
+                    @change="plan.checkGroupingPlanUnit(u.id, ($event.target as HTMLInputElement).checked)"
+                  />
+                  <span class="mono">{{ u.id }}</span>
+                  <span>第{{ u.boxSeq }}箱 · {{ u.vol }} m³</span>
+                  <span class="tag" :class="u.status === 'placed' ? 'tag-green' : 'tag-default'">{{ u.status === 'placed' ? '已入柜' : '未组柜' }}</span>
+                </label>
               </div>
             </div>
           </div>

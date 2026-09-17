@@ -22,6 +22,8 @@ import type {
   FurnaceSchedule,
   GroupingEntry,
   PackSuggestPolicy,
+  PlanUnit,
+  PlanUnitCreation,
   Process,
   ScheduleSortPolicy,
   Shift,
@@ -54,6 +56,14 @@ import {
   replaceCabinetActive,
   toggleDemandCheck,
 } from '../../domain/grouping';
+import {
+  applyPlanUnitCreation,
+  migratePlanToPlanUnits,
+  PLAN_SCHEMA_VERSION,
+  rerunPlanUnitCreation,
+  syncPlacementsFromContents,
+  unitsOfLine,
+} from '../../domain/plan-unit';
 import {
   applyAssign,
   applyChangeCabinet,
@@ -117,6 +127,10 @@ export const usePlanStore = defineStore('plan', {
     fpLoads: [] as EntryLoad[],
     fpConflicts: [] as ValidationIssue[],
     virtualLines: [] as StockLine[],
+    planUnits: [] as PlanUnit[],
+    planUnitCreations: [] as PlanUnitCreation[],
+    schemaVersion: 0,
+    migrateError: '' as string,
     planSeedVersion: 0,
     pool: [] as StockLine[],
     valFilter: 'all' as IssueFilter,
@@ -124,6 +138,8 @@ export const usePlanStore = defineStore('plan', {
     grpSelectedCabinetId: '柜9' as string | null,
     grpFocusedDemandId: null as string | null,
     grpCheckedDemandIds: [] as string[],
+    grpCheckedPlanUnitIds: [] as string[],
+    grpExpandedDemandIds: [] as string[],
     grpLayerHint: false,
     grpPolicyDraft: null as PackSuggestPolicy | null,
     fpSortPolicyDraft: null as ScheduleSortPolicy | null,
@@ -193,6 +209,10 @@ export const usePlanStore = defineStore('plan', {
       this.fpLoads = [];
       this.fpConflicts = [];
       this.virtualLines = loaded.virtualLines;
+      this.planUnits = loaded.planUnits || [];
+      this.planUnitCreations = loaded.planUnitCreations || [];
+      this.schemaVersion = loaded.schemaVersion || 0;
+      this.migrateError = loaded.migrateError || '';
       this.planSeedVersion = loaded.planSeedVersion;
       this.pool = pool;
       this.valFilter = 'all';
@@ -200,6 +220,8 @@ export const usePlanStore = defineStore('plan', {
       this.grpSelectedCabinetId = '柜9';
       this.grpFocusedDemandId = null;
       this.grpCheckedDemandIds = [];
+      this.grpCheckedPlanUnitIds = [];
+      this.grpExpandedDemandIds = [];
       this.grpLayerHint = false;
       this.grpPolicyDraft = clonePackSuggestPolicy(resolvePackSuggestPolicy(loaded.config));
       this.fpSortPolicyDraft = cloneScheduleSortPolicy(resolveScheduleSortPolicy(loaded.config));
@@ -207,6 +229,7 @@ export const usePlanStore = defineStore('plan', {
       this.schedules = loaded.schedules || [];
       this.nextTaskSeq = loaded.nextTaskSeq || 1;
       this.ready = true;
+      if (this.migrateError) toast(this.migrateError, 'error');
     },
     persist(): void {
       const plan: LoadedPlan = {
@@ -219,6 +242,9 @@ export const usePlanStore = defineStore('plan', {
         nextFurnaceSeq: this.nextFurnaceSeq,
         nextTaskSeq: this.nextTaskSeq,
         virtualLines: this.virtualLines,
+        planUnits: this.planUnits,
+        planUnitCreations: this.planUnitCreations,
+        schemaVersion: this.schemaVersion || PLAN_SCHEMA_VERSION,
         config: this.config,
         planSeedVersion: this.planSeedVersion,
         sparseWiped: false,
@@ -318,6 +344,7 @@ export const usePlanStore = defineStore('plan', {
         trayMaster: this.masterTrays,
         allContents: shiftFurnaces,
         runtimes: deriveAllRuntimes(this.masterCabinets, shiftFurnaces, demoRuntimeOverrides()),
+        planUnits: this.planUnits,
       };
     },
     ruleCtxFor(furnaces: FurnaceRun[], lookup?: (id: string) => StockLine | undefined) {
@@ -412,9 +439,81 @@ export const usePlanStore = defineStore('plan', {
           }),
         );
       });
+      this.applyPlanUnitMigration();
       this.planSeedVersion = PLAN_SEED_VERSION;
       this.persist();
       return true;
+    },
+    applyPlanUnitMigration(): boolean {
+      const migrated = migratePlanToPlanUnits({
+        contents: this.furnaces,
+        poolById: (id) => this.poolById(id),
+        creations: this.planUnitCreations,
+        planUnits: this.planUnits,
+        schemaVersion: this.schemaVersion,
+      });
+      if (!migrated.ok) {
+        this.migrateError = migrated.message || 'PU_MIGRATE_FAIL';
+        toast(this.migrateError, 'error');
+        return false;
+      }
+      this.furnaces = migrated.contents;
+      this.planUnits = migrated.planUnits;
+      this.planUnitCreations = migrated.creations;
+      this.schemaVersion = migrated.schemaVersion;
+      this.migrateError = '';
+      return true;
+    },
+    confirmDemand(lineId: string): boolean {
+      const line = this.poolById(lineId);
+      if (!line) {
+        toast('找不到该需求行', 'error');
+        return false;
+      }
+      const result = applyPlanUnitCreation({
+        line,
+        creations: this.planUnitCreations,
+        planUnits: this.planUnits,
+      });
+      if (!result.ok) {
+        toast(`${result.code}：${result.message}`, 'error');
+        return false;
+      }
+      this.planUnitCreations = result.creations;
+      this.planUnits = result.planUnits;
+      if (!this.grpExpandedDemandIds.includes(lineId)) {
+        this.grpExpandedDemandIds = [...this.grpExpandedDemandIds, lineId];
+      }
+      this.persist();
+      toast(`已确认并按一箱一单元分拆 ${result.creation.createdCount} 个计划单元`);
+      return true;
+    },
+    rerunDemandSplit(lineId: string): boolean {
+      const line = this.poolById(lineId);
+      if (!line) {
+        toast('找不到该需求行', 'error');
+        return false;
+      }
+      const result = rerunPlanUnitCreation({
+        line,
+        creations: this.planUnitCreations,
+        planUnits: this.planUnits,
+      });
+      if (!result.ok) {
+        toast(`${result.code}：${result.message}`, 'error');
+        return false;
+      }
+      this.planUnitCreations = result.creations;
+      this.planUnits = result.planUnits;
+      this.persist();
+      toast(`已重跑分拆：${result.creation.createdCount} 个计划单元（v${result.creation.version}）`);
+      return true;
+    },
+    unitsOfDemand(lineId: string): PlanUnit[] {
+      return unitsOfLine(this.planUnits, lineId);
+    },
+    creationOfDemand(lineId: string): PlanUnitCreation | undefined {
+      return this.planUnitCreations.find((c) => c.stockLineId === lineId);
     },
     enterGrouping(): void {
       this.seedDemoFurnaceLoadsIfEmpty();
@@ -823,6 +922,8 @@ export const usePlanStore = defineStore('plan', {
           config: this.config,
           nextId: `CC${this.nextFurnaceSeq++}`,
           poolById: (id) => this.poolById(id),
+          planUnits: this.planUnits,
+          selectedPlanUnitIds: this.grpCheckedPlanUnitIds.length ? this.grpCheckedPlanUnitIds : undefined,
         });
         if (!packed.ok || !packed.content) {
           toast(packed.message, 'error');
@@ -845,22 +946,24 @@ export const usePlanStore = defineStore('plan', {
           return;
         }
         this.furnaces = decision.persisted;
+        if (packed.planUnits) this.planUnits = syncPlacementsFromContents(packed.planUnits, this.furnaces);
         this.grpLayerHint = true;
         this.persist();
         toast(packed.message);
         return;
       }
-      const ids = this.grpCheckedDemandIds.length
-        ? [...this.grpCheckedDemandIds]
-        : this.grpFocusedDemandId
-          ? [this.grpFocusedDemandId]
+      const unitIds = [...this.grpCheckedPlanUnitIds];
+      const lineIds = unitIds.length
+        ? [...new Set(unitIds.map((id) => this.planUnits.find((u) => u.id === id)?.stockLineId).filter((id): id is string => Boolean(id)))]
+        : this.grpCheckedDemandIds.length
+          ? [...this.grpCheckedDemandIds]
           : [];
-      if (!ids.length) {
-        toast('请勾选需求后再自动组柜（单击行仅查看）', 'warn');
+      if (!lineIds.length && !unitIds.length) {
+        toast('请勾选计划单元后再自动组柜（单击行仅查看）', 'warn');
         return;
       }
       const packed = autoPackDemands({
-        lineIds: ids,
+        lineIds: lineIds.length ? lineIds : this.eligiblePool().map((p) => p.id),
         pool: this.eligiblePool(),
         contents: this.furnaces,
         cabinets: this.masterCabinets,
@@ -870,6 +973,8 @@ export const usePlanStore = defineStore('plan', {
         config: this.config,
         nextSeq: this.nextFurnaceSeq,
         poolById: (id) => this.poolById(id),
+        planUnits: this.planUnits,
+        selectedPlanUnitIds: unitIds.length ? unitIds : undefined,
       });
       if (!packed.ok) {
         toast(packed.message, 'error');
@@ -887,18 +992,19 @@ export const usePlanStore = defineStore('plan', {
         return;
       }
       this.furnaces = decision.persisted;
+      if (packed.planUnits) this.planUnits = syncPlacementsFromContents(packed.planUnits, this.furnaces);
       this.nextFurnaceSeq = packed.nextSeq;
       const firstCab = packed.contents.find((c) => c.lines.length && !c.hidden)?.cabinetId;
       if (firstCab) this.grpSelectedCabinetId = firstCab;
       this.grpLayerHint = true;
       this.persist();
-      const extra = packed.unplaced.length ? `；未组入 ${packed.unplaced.length} 行` : '';
+      const extra = packed.unplaced.length ? `；未组入 ${packed.unplaced.length} 个单元` : '';
       toast(`${packed.message}${extra}`);
     },
     runManualPack(): void {
       const runtimes = this.currentRuntimes();
-      let cabinetId = this.grpSelectedCabinetId;
-      const ids = this.grpEntry === 'demand' ? [...this.grpCheckedDemandIds] : [...this.grpCheckedDemandIds];
+      const cabinetId = this.grpSelectedCabinetId;
+      const unitIds = [...this.grpCheckedPlanUnitIds];
       if (this.grpEntry === 'demand' && !cabinetId) {
         toast('请先点选目标灭菌柜（查看行不会勾选需求）', 'warn');
         return;
@@ -907,13 +1013,15 @@ export const usePlanStore = defineStore('plan', {
         toast('请先选择灭菌柜', 'warn');
         return;
       }
-      if (!ids.length) {
-        toast('请勾选要组入的需求（单击行仅查看）', 'warn');
+      if (!unitIds.length) {
+        toast('请勾选要组入的计划单元（单击行仅查看）', 'warn');
         return;
       }
       const packed = manualPackCabinet({
         cabinetId: cabinetId!,
-        lineIds: ids,
+        lineIds: [...new Set(unitIds.map((id) => this.planUnits.find((u) => u.id === id)?.stockLineId).filter((id): id is string => Boolean(id)))],
+        planUnitIds: unitIds,
+        planUnits: this.planUnits,
         contents: this.furnaces,
         cabinets: this.masterCabinets,
         trayMaster: this.masterTrays,
@@ -941,6 +1049,7 @@ export const usePlanStore = defineStore('plan', {
         return;
       }
       this.furnaces = decision.persisted;
+      if (packed.planUnits) this.planUnits = syncPlacementsFromContents(packed.planUnits, this.furnaces);
       this.grpLayerHint = true;
       this.persist();
       toast(packed.message, decision.needsOverridePrompt ? 'warn' : 'success');
@@ -989,6 +1098,21 @@ export const usePlanStore = defineStore('plan', {
         checked,
       );
       this.grpCheckedDemandIds = next.checkedIds;
+    },
+    checkGroupingPlanUnit(id: string, checked: boolean): void {
+      const next = toggleDemandCheck(
+        { focusedId: this.grpFocusedDemandId, checkedIds: this.grpCheckedPlanUnitIds },
+        id,
+        checked,
+      );
+      this.grpCheckedPlanUnitIds = next.checkedIds;
+    },
+    toggleDemandExpand(id: string): void {
+      if (this.grpExpandedDemandIds.includes(id)) {
+        this.grpExpandedDemandIds = this.grpExpandedDemandIds.filter((x) => x !== id);
+      } else {
+        this.grpExpandedDemandIds = [...this.grpExpandedDemandIds, id];
+      }
     },
     togglePoolSelect(id: string, checked: boolean): void {
       if (checked) {
