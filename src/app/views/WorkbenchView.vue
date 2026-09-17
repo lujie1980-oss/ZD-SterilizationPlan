@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { cabinetById, usableCabinets } from '../../data/seed-cabinets';
-import { PROCESSES } from '../../data/seed-processes';
 import { currentFurnaces, furnaceBoxes, furnaceVol, needsSplit, visibleUnassignedPool } from '../../domain/pool';
 import { effectiveMinLoadM3 } from '../../domain/min-load';
 import { validateAll, validateFurnace } from '../../domain/rule-engine';
@@ -12,7 +10,7 @@ import { usePlanStore } from '../stores/planStore';
 
 const plan = usePlanStore();
 const router = useRouter();
-const addCabId = ref(usableCabinets()[0]?.id || '');
+const addCabId = ref(plan.usableCabinets[0]?.id || '');
 
 const furns = computed(() => currentFurnaces(plan.furnaces, plan.date, plan.shift));
 const ctx = computed(() => plan.ruleCtx(furns.value));
@@ -40,7 +38,7 @@ const customers = computed(() => [...new Set(plan.pool.filter((p) => !p.splitOf)
 const processes = computed(() => [...new Set(plan.pool.filter((p) => !p.splitOf).map((p) => p.process))]);
 
 function minTarget(process: string): number {
-  return effectiveMinLoadM3(process, plan.config, PROCESSES);
+  return effectiveMinLoadM3(process, plan.config, plan.masterProcesses);
 }
 
 function linesOf(fuId: string): StockLine[] {
@@ -111,7 +109,7 @@ function runValidate() {
       <label>预热 d <input id="cfgPreheat" class="input" type="number" step="0.5" min="0" style="width:72px" :value="plan.config.cycle.preheatDays" @change="plan.setCycleNum('preheatDays', Number(($event.target as HTMLInputElement).value))" /></label>
       <label>灭菌 d <input id="cfgSterilize" class="input" type="number" step="0.5" min="0" style="width:72px" :value="plan.config.cycle.sterilizeDays" @change="plan.setCycleNum('sterilizeDays', Number(($event.target as HTMLInputElement).value))" /></label>
       <label>BI d <input id="cfgBiDays" class="input" type="number" step="0.5" min="0" style="width:72px" :value="plan.config.cycle.biDays" @change="plan.setCycleNum('biDays', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label>D002 最低拼载 (m³) <input id="cfgD002Min" class="input" type="number" step="1" min="0" style="width:80px" :value="effectiveMinLoadM3('D002', plan.config, PROCESSES)" @change="plan.setD002Min(Number(($event.target as HTMLInputElement).value))" /></label>
+      <label>D002 最低拼载 (m³) <input id="cfgD002Min" class="input" type="number" step="1" min="0" style="width:80px" :value="effectiveMinLoadM3('D002', plan.config, plan.masterProcesses)" @change="plan.setD002Min(Number(($event.target as HTMLInputElement).value))" /></label>
       <label>其他目标 m³ <input id="cfgDefaultMin" class="input" type="number" step="1" min="0" style="width:80px" :value="plan.config.load.defaultMinM3" @change="plan.setDefaultMin(Number(($event.target as HTMLInputElement).value))" /></label>
     </div>
     <div
@@ -181,7 +179,7 @@ function runValidate() {
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <strong>本班炉次</strong>
           <select id="addCabSelect" v-model="addCabId" class="select">
-            <option v-for="c in usableCabinets()" :key="c.id" :value="c.id">{{ c.id }}（{{ c.base }} · {{ c.capacity }}m³{{ c.pending ? ' · 待确认' : '' }}）</option>
+            <option v-for="c in plan.usableCabinets" :key="c.id" :value="c.id">{{ c.id }}（{{ c.base }} · {{ c.capacity }}m³{{ c.pending ? ' · 待确认' : '' }}）</option>
           </select>
           <button id="btnAddFurnace" class="btn btn-sm btn-primary" type="button" @click="plan.addFurnace(addCabId)">+ 添加炉次</button>
           <span class="hint">点击炉卡选中，再点「分配到选中炉」</span>
@@ -210,18 +208,18 @@ function runValidate() {
               <div>
                 <div class="fname">
                   {{ fu.cabinetId }}
-                  <span v-if="cabinetById(fu.cabinetId)?.pending && plan.config.showPendingTags" class="tag tag-pending">主数据待确认</span>
+                  <span v-if="plan.findCabinet(fu.cabinetId)?.pending && plan.config.showPendingTags" class="tag tag-pending">主数据待确认</span>
                   <span class="hint">· {{ fu.id }}</span>
                 </div>
                 <div class="furnace-stats">
-                  <span>{{ cabinetById(fu.cabinetId)?.base || '' }}基地</span>
+                  <span>{{ plan.findCabinet(fu.cabinetId)?.base || '' }}基地</span>
                   <span>已装 <strong>{{ furnaceMeta(fu.id).vol.toFixed(1) }}</strong> m³</span>
                   <span>{{ furnaceMeta(fu.id).boxes }} 箱</span>
                   <span>目标 ≥{{ furnaceMeta(fu.id).target }}</span>
                 </div>
                 <div class="progress-bar"><div class="fill" :class="furnaceMeta(fu.id).fillClass" :style="{ width: furnaceMeta(fu.id).pct + '%' }" /></div>
                 <select class="select cab-change" :data-change-cab="fu.id" title="改柜" :value="fu.cabinetId" @change.stop="plan.changeFurnaceCabinet(fu.id, ($event.target as HTMLSelectElement).value)">
-                  <option v-for="c in usableCabinets()" :key="c.id" :value="c.id">{{ c.id }}</option>
+                  <option v-for="c in plan.usableCabinets" :key="c.id" :value="c.id">{{ c.id }}</option>
                 </select>
               </div>
             </div>
