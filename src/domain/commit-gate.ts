@@ -27,11 +27,10 @@ export interface CommitDecision {
 
 export function cloneFurnaces(furnaces: FurnaceRun[]): FurnaceRun[] {
   return furnaces.map((f) => {
-    const copy: FurnaceRun = {
-      ...f,
-      lines: [...f.lines],
-      stockShares: (f.stockShares || []).map((s) => ({ ...s })),
-    };
+    const copy: FurnaceRun = { ...f, lines: [...f.lines] };
+    if (f.stockShares) {
+      copy.stockShares = f.stockShares.map((s) => ({ ...s }));
+    }
     if (f.trays) {
       copy.trays = f.trays.map((t) => ({
         ...t,

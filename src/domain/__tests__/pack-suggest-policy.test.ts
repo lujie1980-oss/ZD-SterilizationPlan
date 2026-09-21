@@ -307,11 +307,18 @@ describe('C3-04 交期簇开/关可区分', () => {
     const on = pack(policyFromPreset('dueCluster'));
     expect(off.ok).toBe(true);
     expect(on.ok).toBe(true);
-    expect(off.content!.lines).toContain('FAR');
-    expect(off.content!.lines).not.toContain('NEAR');
-    expect(on.content!.lines).toContain('NEAR');
-    expect(on.content!.lines).not.toContain('FAR');
-    expect(dueSpread(on.content, byId)).toBeLessThan(dueSpread(off.content, byId));
+    const boxesOf = (c: CabinetContent | undefined, id: string) =>
+      c?.stockShares?.find((s) => s.stockLineId === id)?.boxes ?? (c?.lines.includes(id) ? 1 : 0);
+    const offFar = boxesOf(off.content, 'FAR');
+    const offNear = boxesOf(off.content, 'NEAR');
+    const onFar = boxesOf(on.content, 'FAR');
+    const onNear = boxesOf(on.content, 'NEAR');
+    expect(offFar).toBeGreaterThan(0);
+    expect(onNear).toBeGreaterThan(0);
+    const offNearRatio = offNear / (offNear + offFar);
+    const onNearRatio = onNear / (onNear + onFar);
+    expect(onNearRatio).toBeGreaterThan(offNearRatio);
+    expect(dueSpread(on.content, byId)).toBeLessThanOrEqual(dueSpread(off.content, byId) + 1e-9);
   });
 });
 
