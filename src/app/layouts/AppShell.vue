@@ -6,6 +6,7 @@ import FactDrawer from '../components/facts/FactDrawer.vue';
 import OverridePrompt from '../components/common/OverridePrompt.vue';
 import SplitWizardModal from '../components/common/SplitWizardModal.vue';
 import ToastHost from '../components/common/ToastHost.vue';
+import MasterImportDrawer from '../components/master/MasterImportDrawer.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -69,6 +70,7 @@ function onNav(path: string) {
       <RouterView />
     </div>
     <ToastHost />
+    <MasterImportDrawer />
     <FactDrawer />
     <OverridePrompt />
     <SplitWizardModal />

@@ -593,6 +593,13 @@ a.tag { text-decoration: none; }
 .fp-sort-item.is-off { opacity: 0.55; }
 .fp-sort-name { font-weight: 600; }
 .fp-sort-enable { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+a.shift-tab { text-decoration: none; }
+.master-io-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.master-file { display: none; }
+.master-import-drawer { width: 640px; max-width: 96vw; }
+.master-import-drawer .err-n { color: var(--error); }
+.master-import-drawer .modal-ft { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+#page-master .toolbar { margin-bottom: 8px; }
 @media (max-width: 1100px) {
   .grp-cols { grid-template-columns: 1fr; }
 }

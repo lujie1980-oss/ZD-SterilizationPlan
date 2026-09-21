@@ -17,6 +17,12 @@ export const routes: RouteRecordRaw[] = [
         meta: { page: 'master', title: '基础数据维护 · 灭菌柜' },
       },
       {
+        path: 'trays',
+        name: 'master-trays',
+        component: () => import('../views/TraysView.vue'),
+        meta: { page: 'master', title: '基础数据维护 · 托盘' },
+      },
+      {
         path: 'processes',
         name: 'master-processes',
         component: () => import('../views/ProcessesView.vue'),
@@ -27,6 +33,12 @@ export const routes: RouteRecordRaw[] = [
         name: 'master-boxspecs',
         component: () => import('../views/BoxSpecsView.vue'),
         meta: { page: 'master', title: '基础数据维护 · 箱规' },
+      },
+      {
+        path: 'customer-rules',
+        name: 'master-customer-rules',
+        component: () => import('../views/CustomerRulesView.vue'),
+        meta: { page: 'master', title: '基础数据维护 · 客户规则' },
       },
     ],
   },

@@ -108,6 +108,18 @@ export interface BoxSpec {
   sku: string;
   name: string;
   vol: number;
+  lengthMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  note?: string;
+}
+
+export type CustomerMixPolicy = 'warn' | 'forbid' | 'off';
+
+export interface CustomerRule {
+  customerId: string;
+  designatedCabinets: string[];
+  mixPolicy: CustomerMixPolicy;
   note?: string;
 }
 

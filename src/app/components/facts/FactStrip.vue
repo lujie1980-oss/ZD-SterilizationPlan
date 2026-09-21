@@ -2,14 +2,13 @@
 import { computed } from 'vue';
 import type { StockLine } from '../../../domain/entities';
 import { deriveFacts } from '../../../domain/facts';
-import { PROCESSES } from '../../../data/seed-processes';
 import { usePlanStore } from '../../stores/planStore';
 import { useUiStore } from '../../stores/uiStore';
 
 const props = defineProps<{ line: StockLine }>();
 const plan = usePlanStore();
 const ui = useUiStore();
-const facts = computed(() => deriveFacts(props.line, PROCESSES, plan.config, plan.date));
+const facts = computed(() => deriveFacts(props.line, plan.masterProcesses, plan.config, plan.date));
 const dueCls = computed(() =>
   facts.value.dueTone === 'overdue' ? 'due-overdue' : facts.value.dueTone === 'soon' ? 'due-soon' : 'due-ok',
 );

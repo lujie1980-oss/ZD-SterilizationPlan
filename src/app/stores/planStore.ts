@@ -6,28 +6,45 @@ import {
   PLAN_SEED_VERSION,
   isDemoSeedEnabled,
 } from '../../data/config-defaults';
-import { CABINETS, TRAYS, cabinetById } from '../../data/seed-cabinets';
 import { getDemoFurnaceSeed } from '../../data/seed-demo-plan';
 import { createSeedPool } from '../../data/seed-pool';
-import { PROCESSES } from '../../data/seed-processes';
 import { normalizeCabinetContent } from '../../domain/cabinet-content';
 import { demoRuntimeOverrides, deriveAllRuntimes } from '../../domain/cabinet-runtime';
 import { applyGanttSchedule } from '../../domain/cabinet-task';
 import type {
   AppConfig,
+  BoxSpec,
+  Cabinet,
   CabinetTask,
+  CustomerRule,
   EntryLoad,
   FurnaceRun,
   FurnaceSchedule,
   GroupingEntry,
   PackSuggestPolicy,
+  Process,
   ScheduleSortPolicy,
   Shift,
   StockLine,
+  Tray,
   ValidationIssue,
 } from '../../domain/entities';
 import { buildEntryLoads } from '../../domain/entry-scheduler';
 import { buildDayPlanCsv } from '../../domain/export-csv';
+import {
+  applyMasterUpsert,
+  overlayMasterSlice,
+  parseMasterFile,
+  resolveCabinet,
+  serializeMaster,
+  templateMaster,
+  validateMasterImport,
+  type MasterData,
+  type MasterEntity,
+  type MasterFileFormat,
+  type ParsedRow,
+  type ValidationReport,
+} from '../../domain/master-data-io';
 import {
   autoPackCabinet,
   autoPackDemands,
@@ -72,6 +89,8 @@ import {
 import { canAddFurnace, validateFurnace } from '../../domain/rule-engine';
 import { applySplit, findSplitTarget } from '../../domain/split-wizard';
 import { loadPlan, savePlan, type LoadedPlan } from '../../persistence/plan-store-v2';
+import { loadMaster, saveMaster } from '../../persistence/master-store';
+import { triggerDownload } from '../lib/download';
 import { useUiStore } from './uiStore';
 
 const GROUPING_ISSUE_CODES = new Set(['REPACK_AFTER_LOAD_COMPLETE', 'ON_TRAY_QTY_OVERFLOW', 'TRAY_OVERFLOW']);
@@ -111,6 +130,16 @@ export const usePlanStore = defineStore('plan', {
     tasks: [] as CabinetTask[],
     schedules: [] as FurnaceSchedule[],
     nextTaskSeq: 1,
+    masterCabinets: [] as Cabinet[],
+    masterTrays: [] as Tray[],
+    masterProcesses: [] as Process[],
+    masterBoxSpecs: [] as BoxSpec[],
+    masterCustomerRules: [] as CustomerRule[],
+    masterImport: null as null | {
+      entity: MasterEntity;
+      rows: ParsedRow[];
+      report: ValidationReport;
+    },
   }),
   getters: {
     scheduleMode(): 'auto' | 'manual' {
@@ -122,20 +151,30 @@ export const usePlanStore = defineStore('plan', {
     sortPolicy(): ScheduleSortPolicy {
       return this.fpSortPolicyDraft || resolveScheduleSortPolicy(this.config);
     },
+    usableCabinets(): Cabinet[] {
+      return this.masterCabinets.filter((c) => c.status !== '报废');
+    },
   },
   actions: {
     hydrate(): void {
-      const loaded = loadPlan();
+      const master = loadMaster();
+      this.masterCabinets = master.cabinets;
+      this.masterTrays = master.trays;
+      this.masterProcesses = master.processes;
+      this.masterBoxSpecs = master.boxSpecs;
+      this.masterCustomerRules = master.customerRules;
+      this.masterImport = null;
+      const loaded = loadPlan({ cabinets: this.masterCabinets, trays: this.masterTrays });
       const pool = mergeVirtualLinesIntoPool(createSeedPool(), loaded.virtualLines);
       const lookup = (id: string) => pool.find((p) => p.id === id) || loaded.virtualLines.find((p) => p.id === id);
       const furnaces = (loaded.furnaces || []).map((f) =>
         normalizeCabinetContent(
           { ...f, date: f.date ?? null, shift: f.shift ?? null },
           {
-            trayMaster: TRAYS,
+            trayMaster: this.masterTrays,
             poolById: lookup,
             largeBoxVol: loaded.config.box.largeBoxVol,
-            cabinet: cabinetById(f.cabinetId),
+            cabinet: this.findCabinet(f.cabinetId),
           },
         ),
       );
@@ -186,6 +225,84 @@ export const usePlanStore = defineStore('plan', {
       };
       savePlan(plan);
     },
+    currentMaster(): MasterData {
+      return {
+        cabinets: this.masterCabinets,
+        trays: this.masterTrays,
+        processes: this.masterProcesses,
+        boxSpecs: this.masterBoxSpecs,
+        customerRules: this.masterCustomerRules,
+      };
+    },
+    persistMaster(): void {
+      saveMaster(this.currentMaster());
+    },
+    findCabinet(id: string): Cabinet | undefined {
+      return resolveCabinet(this.masterCabinets, id);
+    },
+    traysForCabinet(cabinetId: string): Tray[] {
+      const cab = this.findCabinet(cabinetId);
+      const id = cab?.id ?? cabinetId;
+      return this.masterTrays.filter((t) => t.cabinetId === id && t.status === '可用').sort((a, b) => a.level - b.level);
+    },
+    applyMasterSlice(entity: MasterEntity, slice: Cabinet[] | Tray[] | Process[] | BoxSpec[] | CustomerRule[]): void {
+      const next = overlayMasterSlice(this.currentMaster(), entity, slice);
+      this.masterCabinets = next.cabinets;
+      this.masterTrays = next.trays;
+      this.masterProcesses = next.processes;
+      this.masterBoxSpecs = next.boxSpecs;
+      this.masterCustomerRules = next.customerRules;
+    },
+    previewMasterImport(entity: MasterEntity, bytes: Uint8Array | ArrayBuffer, format: MasterFileFormat): void {
+      const parsed = parseMasterFile(entity, bytes, format);
+      if (!parsed.ok) {
+        this.masterImport = {
+          entity,
+          rows: [],
+          report: { ok: false, errors: [parsed.error], warnings: [] },
+        };
+        return;
+      }
+      const report = validateMasterImport(entity, parsed.rows, this.currentMaster());
+      this.masterImport = { entity, rows: parsed.rows, report };
+    },
+    cancelMasterImport(): void {
+      this.masterImport = null;
+    },
+    confirmMasterImport(): boolean {
+      const preview = this.masterImport;
+      if (!preview || !preview.report.ok) return false;
+      const snapshot = this.currentMaster();
+      try {
+        const slice = applyMasterUpsert(preview.entity, preview.rows, snapshot);
+        this.applyMasterSlice(preview.entity, slice);
+        this.persistMaster();
+        this.masterImport = null;
+        toast('主数据已导入（仅 upsert，未改计划/交易）');
+        return true;
+      } catch (e) {
+        this.applyMasterSlice('cabinets', snapshot.cabinets);
+        this.applyMasterSlice('trays', snapshot.trays);
+        this.applyMasterSlice('processes', snapshot.processes);
+        this.applyMasterSlice('box_specs', snapshot.boxSpecs);
+        this.applyMasterSlice('customer_rules', snapshot.customerRules);
+        toast(`导入失败，已回滚：${(e as Error).message || e}`, 'error');
+        return false;
+      }
+    },
+    downloadMasterExport(entity: MasterEntity, format: MasterFileFormat, slice?: Cabinet[] | Tray[] | Process[] | BoxSpec[] | CustomerRule[]): void {
+      const data = slice ? overlayMasterSlice(this.currentMaster(), entity, slice) : this.currentMaster();
+      const blob = serializeMaster(entity, data, format);
+      triggerDownload(blob, `${entity}.${format === 'csv' ? 'csv' : 'xlsx'}`);
+    },
+    downloadMasterTemplate(entity: MasterEntity, format: MasterFileFormat): void {
+      try {
+        const blob = templateMaster(entity, format);
+        triggerDownload(blob, `${entity}_template.${format === 'csv' ? 'csv' : 'xlsx'}`);
+      } catch {
+        toast('客户规则导入为 P1，当前仅支持导出', 'warn');
+      }
+    },
     poolById(id: string): StockLine | undefined {
       return this.pool.find((p) => p.id === id) || this.virtualLines.find((p) => p.id === id);
     },
@@ -193,21 +310,21 @@ export const usePlanStore = defineStore('plan', {
       const shiftFurnaces = sameShift ?? currentFurnaces(this.furnaces, this.date, this.shift);
       const look = lookup ?? ((id: string) => this.poolById(id));
       return {
-        cabinets: CABINETS,
-        processes: PROCESSES,
+        cabinets: this.masterCabinets,
+        processes: this.masterProcesses,
         poolById: look,
         config: this.config,
         sameShiftFurnaces: shiftFurnaces,
-        trayMaster: TRAYS,
+        trayMaster: this.masterTrays,
         allContents: shiftFurnaces,
-        runtimes: deriveAllRuntimes(CABINETS, shiftFurnaces, demoRuntimeOverrides()),
+        runtimes: deriveAllRuntimes(this.masterCabinets, shiftFurnaces, demoRuntimeOverrides()),
       };
     },
     ruleCtxFor(furnaces: FurnaceRun[], lookup?: (id: string) => StockLine | undefined) {
       return this.ruleCtx(currentFurnaces(furnaces, this.date, this.shift), lookup);
     },
     currentRuntimes() {
-      return deriveAllRuntimes(CABINETS, this.furnaces, demoRuntimeOverrides());
+      return deriveAllRuntimes(this.masterCabinets, this.furnaces, demoRuntimeOverrides());
     },
     eligiblePool(): StockLine[] {
       return this.pool.filter((p) => !p.splitOf);
@@ -288,10 +405,10 @@ export const usePlanStore = defineStore('plan', {
         };
         this.furnaces.push(
           normalizeCabinetContent(raw, {
-            trayMaster: TRAYS,
+            trayMaster: this.masterTrays,
             poolById: (id) => this.poolById(id),
             largeBoxVol: this.config.box.largeBoxVol,
-            cabinet: cabinetById(d.cabinetId),
+            cabinet: this.findCabinet(d.cabinetId),
           }),
         );
       });
@@ -307,11 +424,11 @@ export const usePlanStore = defineStore('plan', {
       const seeded = this.seedDemoFurnaceLoadsIfEmpty();
       const scheduled = applyGanttSchedule({
         contents: this.furnaces,
-        cabinets: CABINETS,
-        processes: PROCESSES,
+        cabinets: this.masterCabinets,
+        processes: this.masterProcesses,
         config: this.config,
         poolById: (id) => this.poolById(id),
-        trayMaster: TRAYS,
+        trayMaster: this.masterTrays,
         startDate: this.fpStartDate,
         scheduleMode: this.scheduleMode,
         epoch: DEFAULT_DATE,
@@ -321,8 +438,8 @@ export const usePlanStore = defineStore('plan', {
         if (!opts?.silent) toast(scheduled.message, 'error');
         const built = buildEntryLoads({
           furnaces: this.furnaces,
-          cabinets: CABINETS,
-          processes: PROCESSES,
+          cabinets: this.masterCabinets,
+          processes: this.masterProcesses,
           config: this.config,
           poolById: (id) => this.poolById(id),
           epoch: DEFAULT_DATE,
@@ -337,8 +454,8 @@ export const usePlanStore = defineStore('plan', {
       this.persist();
       const { loads, conflicts } = buildEntryLoads({
         furnaces: this.furnaces,
-        cabinets: CABINETS,
-        processes: PROCESSES,
+        cabinets: this.masterCabinets,
+        processes: this.masterProcesses,
         config: this.config,
         poolById: (id) => this.poolById(id),
         epoch: DEFAULT_DATE,
@@ -385,8 +502,8 @@ export const usePlanStore = defineStore('plan', {
     refreshValidationLoads(): void {
       const built = buildEntryLoads({
         furnaces: this.furnaces,
-        cabinets: CABINETS,
-        processes: PROCESSES,
+        cabinets: this.masterCabinets,
+        processes: this.masterProcesses,
         config: this.config,
         poolById: (id) => this.poolById(id),
         epoch: DEFAULT_DATE,
@@ -589,11 +706,11 @@ export const usePlanStore = defineStore('plan', {
         date: this.date,
         shift: this.shift,
         nextSeq: this.nextFurnaceSeq,
-        minLoad: effectiveMinLoadM3('D002', this.config, PROCESSES),
+        minLoad: effectiveMinLoadM3('D002', this.config, this.masterProcesses),
         poolById: (id) => this.poolById(id),
         config: this.config,
-        cabinets: CABINETS,
-        processes: PROCESSES,
+        cabinets: this.masterCabinets,
+        processes: this.masterProcesses,
       });
       if (!result.ok && !result.aborted) {
         toast(result.message, 'info');
@@ -673,7 +790,7 @@ export const usePlanStore = defineStore('plan', {
         date: this.date,
         shift: this.shift,
         furnaces: currentFurnaces(this.furnaces, this.date, this.shift),
-        cabinets: CABINETS,
+        cabinets: this.masterCabinets,
         poolById: (id) => this.poolById(id),
       });
       if (csv.rowCount === 0) {
@@ -699,9 +816,9 @@ export const usePlanStore = defineStore('plan', {
           cabinetId: this.grpSelectedCabinetId,
           pool: this.eligiblePool(),
           contents: this.furnaces,
-          cabinets: CABINETS,
-          processes: PROCESSES,
-          trayMaster: TRAYS,
+          cabinets: this.masterCabinets,
+          processes: this.masterProcesses,
+          trayMaster: this.masterTrays,
           runtimes,
           config: this.config,
           nextId: `CC${this.nextFurnaceSeq++}`,
@@ -746,9 +863,9 @@ export const usePlanStore = defineStore('plan', {
         lineIds: ids,
         pool: this.eligiblePool(),
         contents: this.furnaces,
-        cabinets: CABINETS,
-        processes: PROCESSES,
-        trayMaster: TRAYS,
+        cabinets: this.masterCabinets,
+        processes: this.masterProcesses,
+        trayMaster: this.masterTrays,
         runtimes,
         config: this.config,
         nextSeq: this.nextFurnaceSeq,
@@ -798,8 +915,8 @@ export const usePlanStore = defineStore('plan', {
         cabinetId: cabinetId!,
         lineIds: ids,
         contents: this.furnaces,
-        cabinets: CABINETS,
-        trayMaster: TRAYS,
+        cabinets: this.masterCabinets,
+        trayMaster: this.masterTrays,
         runtimes,
         config: this.config,
         nextId: `CC${this.nextFurnaceSeq++}`,

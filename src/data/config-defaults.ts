@@ -4,6 +4,7 @@ import { coerceScheduleSortPolicy, defaultScheduleSortPolicy } from '../domain/s
 
 export const STORAGE_KEY = 'zhende_sterilization_plan_v2';
 export const STORAGE_KEY_LEGACY = 'zhende_sterilization_plan_v1';
+export const STORAGE_KEY_MASTER = 'zhende_sterilization_master_v1';
 export const PLAN_SEED_VERSION = 2;
 export const DEMO_MIN_CABINETS = 5;
 export const DEMO_MIN_LOADS = 5;

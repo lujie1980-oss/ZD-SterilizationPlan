@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
-import { CABINETS, cabinetById } from '../../data/seed-cabinets';
 import { addDays, dayOffset, fmtDate, fmtDateTime } from '../../domain/dates';
 import type { EntryLoad } from '../../domain/entities';
 import SortPolicyPanel from '../components/gantt/SortPolicyPanel.vue';
@@ -22,7 +21,7 @@ const loads = computed(() => {
 
 const cabIds = computed(() => {
   const ids = [...new Set(loads.value.map((l) => l.cabinetId))];
-  const order = CABINETS.map((c) => c.id);
+  const order = plan.masterCabinets.map((c) => c.id);
   ids.sort((a, b) => {
     const ia = order.indexOf(a);
     const ib = order.indexOf(b);
@@ -191,10 +190,10 @@ function selectCab(id: string) {
               >
                 <div class="cab-id">
                   {{ id }}
-                  <span v-if="cabinetById(id)?.pending || id === '柜21'" class="tag tag-pending">待确认</span>
+                  <span v-if="plan.findCabinet(id)?.pending || id === '柜21'" class="tag tag-pending">待确认</span>
                   <span v-if="cabLoads(id).some((l) => l.conflict)" class="tag tag-red">冲突</span>
                 </div>
-                <div class="cab-meta">{{ cabinetById(id)?.base || '—' }}基地 · {{ cabinetById(id)?.status || '—' }} · {{ cabLoads(id).length }} 炉次</div>
+                <div class="cab-meta">{{ plan.findCabinet(id)?.base || '—' }}基地 · {{ plan.findCabinet(id)?.status || '—' }} · {{ cabLoads(id).length }} 炉次</div>
               </div>
               <div
                 class="fp-row-track"
@@ -225,7 +224,7 @@ function selectCab(id: string) {
       <aside id="fpQueuePanel" class="fp-queue card">
         <div class="card-header">
           <span id="fpQueueTitle">{{ selectedCab ? `${selectedCab} · 进炉顺序队列` : '进炉顺序队列' }}</span>
-          <span id="fpQueueSub" class="hint">{{ selectedCab ? `${cabinetById(selectedCab)?.base || ''}基地${cabinetById(selectedCab)?.pending || selectedCab === '柜21' ? ' · 待确认' : ''}` : '点击柜行查看' }}</span>
+          <span id="fpQueueSub" class="hint">{{ selectedCab ? `${plan.findCabinet(selectedCab)?.base || ''}基地${plan.findCabinet(selectedCab)?.pending || selectedCab === '柜21' ? ' · 待确认' : ''}` : '点击柜行查看' }}</span>
         </div>
         <div class="card-body table-wrap" style="padding:0;flex:1;overflow:auto">
           <table id="fpQueueTable" class="data">
