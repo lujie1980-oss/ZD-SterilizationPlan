@@ -16,6 +16,7 @@ export function buildDayPlanCsv(opts: {
       f.lines.forEach((lid) => {
         const p = opts.poolById(lid);
         if (!p) return;
+        const share = f.stockShares?.find((s) => s.stockLineId === lid);
         const cols = [
           opts.date,
           opts.shift,
@@ -27,9 +28,9 @@ export function buildDayPlanCsv(opts: {
           `"${p.name}"`,
           p.customer,
           p.process,
-          String(p.boxes),
+          String(share?.boxes ?? p.boxes),
           String(p.boxVol),
-          String(p.vol),
+          String(share?.vol ?? p.vol),
           p.wo,
           p.batch,
           p.urgent ? 'Y' : 'N',

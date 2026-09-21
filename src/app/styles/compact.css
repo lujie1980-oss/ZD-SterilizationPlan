@@ -557,6 +557,15 @@ table.data input[type=checkbox] { cursor: pointer; width: 14px; height: 14px; }
 .grp-layer-bd { padding: 8px 10px; font-size: 12px; color: var(--text-secondary); }
 .grp-steps { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .grp-cab-summary { margin-bottom: 10px; }
+.grp-pack-metrics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.grp-shares { margin: 10px 0; }
+.grp-share-row { display: flex; gap: 10px; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed var(--border); }
+.grp-trays-optional { margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
+.grp-trays-optional summary { cursor: pointer; margin-bottom: 6px; }
+.grp-demand.is-large-blocked { opacity: 0.55; }
+.pack-issue { font-size: 12px; margin: 2px 0; }
+.pack-issue-vol { color: #cf1322; }
+.pack-issue-box { color: #d46b08; }
 
 .grp-policy {
   background: #fff; border: 1px solid var(--border); border-radius: var(--radius);

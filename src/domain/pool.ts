@@ -9,10 +9,13 @@ export function isEligible(line: StockLine, cfg: AppConfig): boolean {
 }
 
 export function furnaceVol(f: FurnaceRun, poolById: (id: string) => StockLine | undefined): number {
+  if (f.stockShares?.length) return f.stockShares.reduce((s, r) => s + (r.vol || 0), 0);
+  if (f.totalVol != null && Number.isFinite(f.totalVol) && f.totalVol > 0) return f.totalVol;
   return f.lines.reduce((s, id) => s + (poolById(id)?.vol || 0), 0);
 }
 
 export function furnaceBoxes(f: FurnaceRun, poolById: (id: string) => StockLine | undefined): number {
+  if (f.stockShares?.length) return f.stockShares.reduce((s, r) => s + (r.boxes || 0), 0);
   return f.lines.reduce((s, id) => s + (poolById(id)?.boxes || 0), 0);
 }
 

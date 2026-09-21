@@ -57,10 +57,10 @@ docker compose down
 
 ## 演示路径（验收）
 
-1. **组柜优化（变更-1 主路径）**
+1. **组柜优化（变更-8 体积口径）**
    1. 侧栏「组柜优化」`/pack`。入口 **选柜 / 选需求**，无上线日期筛选、无白夜班切换。页内可看本批校验摘要，链到结果发布。
    2. **选柜**：点柜 9 → 完整可进列表分栏「已进本柜 / 还可排入 / 已进其他柜」；灭菌中柜（演示柜14）灰显禁用但仍可见。
-   3. 点「自动组柜」：按当前 **建议策略**（默认填满优先 80%、交期簇关）挑行；可见分层（托盘主数据）→ 装柜；柜卡「未排」，`date/shift=null`，**不建 CabinetTask**。层体积超过 `Tray.capacityM3` 时分层卡片显示红色「超托盘」且 `TRAY_OVERFLOW` error（C1-28：auto 拒绝落盘，手工可落盘+强预警）；装柜率分母仍为柜 `ratedLoadM3`。
+   3. 点「自动组柜」：按当前 **建议策略** 挑需求行，按 **箱型体积** 写入 `stockShares`（`{ stockLineId, boxes, vol, largeBoxes }`）。柜卡「未排」，`date/shift=null`，**不建 CabinetTask**。柜摘要显示 **装柜率（体积）**、**大箱 x/280**、剩余体积。大箱满 280 后禁用再拖入大箱，小箱仍可（体积允许）。∑V 超柜容 `VOL_OVERFLOW`、大箱超 280 `BOX_LIMIT`：自动模式拒绝落盘。托盘层默认折叠，不作为拼柜必经步骤。
    4. **建议策略面板**：预设（填满优先 / 交期簇优先 / 多柜均衡 / 自定义）、先填满一台 vs 多柜均衡、目标装柜率 70%～95%、交期簇开关与窗口天数。点「保存策略」只写入 `config.packSuggestPolicy`，**不**改写已有载荷；点「自动组柜」才按新策略重算。「恢复默认」回到填满优先 80% + 交期窗 3 天 + 交期簇关。硬约束与双模式不可配掉。
    5. **选需求**：单击行只查看可组柜列表（不勾选）；勾选框才进入多选批量。自动组柜按策略为行选柜（填满优先集中一台，多柜均衡分散）。
    6. 自动模式 error 不落盘；手工调整可违例。FactStrip / 自动|手工闸门（二期 A）仍在。
@@ -107,7 +107,7 @@ src/
 
 - Key：`zhende_sterilization_plan_v2`（兼容读取 `…_v1` 且非稀疏时迁移）
 - 字段：`date` / `shift` / `furnaces`（= `contents` 双写，含可选 `manualViolation`） / `contents` / `tasks` / `runtimes` / `schedules` / `nextFurnaceSeq` / **`virtualLines: StockLine[]`** / `config`（含 **`scheduleMode`**、可选 **`overrideNotes`**、**`packSuggestPolicy`**、**`scheduleSortPolicy`**） / `planSeedVersion`
-- 组柜结构：`CabinetContent` → `TraysInCabinetContent`（必填 `trayId`）→ `StockLinesOnTray`；旧 `FurnaceRun`/`Layer`/`OnLayer` 仅为类型别名
+- 组柜结构：`CabinetContent.stockShares[]`（需求行分量 `{ stockLineId, boxes, vol, largeBoxes }` + `totalVol` / `largeBoxCount` / `fillRate`）为拼柜真源；`TraysInCabinetContent` 为可选后置，不参与硬约束主路径。旧 `lines: string[]` 由 shares 派生。
 - 组柜阶段 `date`/`shift`/`taskId` 为 null；进炉同步写回并建 `CabinetTask` 链（prev/next/FirstTask/IsFirst）
 - 旧快照缺 `scheduleMode` 时缺省为 **`auto`**；切换模式不清除炉次
 - 旧快照皆有 date 时视为 **scheduled**（C1-08）
@@ -129,7 +129,7 @@ src/
 | `Process.minLoadM3` | D002=56 | 工艺主数据默认；无 map 项时回退 |
 | `load.defaultMinM3` | 60 | 其他目标拼载 |
 | `box.largeBoxVol` | 0.12 | 大箱单箱体积阈值 m³ |
-| `box.maxBoxesWhenLarge` | 280 | v1.3：每炉**大箱箱数合计**上限（`sum(boxes where boxVol ≥ largeBoxVol)` &gt;280 才 BOX_LIMIT；炉总箱数不触发） |
+| `box.maxBoxesWhenLarge` | 280 | 变更-8：每炉**大箱箱数合计**上限；满 280 后本炉只可再混小箱（余量 B） |
 | `box.boardsPerFurnaceHint` | 30 | 经验提示，**非硬约束** |
 | `config.allowFiller` | false | 仅改 TARGET_MIN 文案 |
 | `config.mixCustomerWarn` | true | MIX_CUSTOMER 开关 |
@@ -151,7 +151,7 @@ src/
 
 ## 校验码
 
-**硬**：`CABINET_SCRAPPED`（报废不可添加炉次）、`CABINET_MISMATCH`、`BOX_LIMIT`（v1.3：仅大箱合计 &gt; `maxBoxesWhenLarge`；大箱+小箱混炉总箱 500–700 但大箱 ≤280 通过）、`TRAY_OVERFLOW`（层体积 &gt; `Tray.capacityM3`，分层示意「超托盘」；auto 拒落盘 / manual 可落盘+强预警）、`REPACK_AFTER_LOAD_COMPLETE`（装填完毕待入炉：自动禁再拼；手工再拼须强预警）、`ON_TRAY_QTY_OVERFLOW`（OnTray 箱/体积分量超过 StockLine 剩余可排量）  
+**硬**：`CABINET_SCRAPPED`（报废不可添加炉次）、`CABINET_MISMATCH`、`VOL_OVERFLOW`（本炉 ∑vol > 柜 `ratedLoadM3`）、`BOX_LIMIT`（v1.3 / 变更-8：仅大箱合计 &gt; `maxBoxesWhenLarge`；炉总箱数不触发；大箱满 280 后可混小箱）、`TRAY_OVERFLOW`（仅当后置启用托盘层且层体积 &gt; `Tray.capacityM3`）、`REPACK_AFTER_LOAD_COMPLETE`（装填完毕待入炉：自动禁再拼；手工再拼须强预警）、`ON_TRAY_QTY_OVERFLOW`（分量箱/体积超过 StockLine 剩余可排量）  
 **软**：`D002_MIN`、`TARGET_MIN`、`MIX_CUSTOMER`、`OVER_CAP`、`OCCUPANCY`、`STERILIZE_OVERLAP`、`PREHEAT_OVERLAP`  
 **信息**：`CAB21`、`PROC_PENDING`
 

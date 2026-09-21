@@ -1,6 +1,7 @@
 import type {
   Cabinet,
   CabinetContent,
+  ContentLineShare,
   ContentStatus,
   FurnaceRun,
   StockLine,
@@ -9,6 +10,12 @@ import type {
   TraysInCabinetContent,
 } from './entities';
 import { furnaceVol, largeBoxCount } from './pool';
+import {
+  aggregateShares,
+  cloneShares,
+  makeShare,
+  shareVol,
+} from './volume-pack';
 
 export function flattenOnTrayIds(trays: TraysInCabinetContent[] | undefined): string[] {
   if (!trays?.length) return [];
@@ -21,7 +28,98 @@ export function flattenOnTrayIds(trays: TraysInCabinetContent[] | undefined): st
   return ids;
 }
 
+export function flattenShareIds(shares: ContentLineShare[] | undefined): string[] {
+  if (!shares?.length) return [];
+  const ids: string[] = [];
+  for (const s of shares) {
+    if (s.stockLineId && !ids.includes(s.stockLineId)) ids.push(s.stockLineId);
+  }
+  return ids;
+}
+
+function sharesFromTrays(trays: TraysInCabinetContent[] | undefined, poolById: (id: string) => StockLine | undefined, largeBoxVol: number): ContentLineShare[] {
+  const byId = new Map<string, ContentLineShare>();
+  for (const tray of trays || []) {
+    for (const row of tray.onTray || []) {
+      if (!row.stockLineId) continue;
+      const line = poolById(row.stockLineId);
+      const boxVol = line?.boxVol ?? (row.boxes ? row.vol / row.boxes : 0);
+      const add = makeShare({ id: row.stockLineId, boxVol }, row.boxes || 0, largeBoxVol);
+      if (row.vol != null && Number.isFinite(row.vol)) add.vol = row.vol;
+      const cur = byId.get(row.stockLineId);
+      if (!cur) byId.set(row.stockLineId, add);
+      else {
+        cur.boxes += add.boxes;
+        cur.vol = +(cur.vol + add.vol).toFixed(6);
+        cur.largeBoxes += add.largeBoxes;
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
+function sharesFromLineIds(lineIds: string[], poolById: (id: string) => StockLine | undefined, largeBoxVol: number): ContentLineShare[] {
+  const shares: ContentLineShare[] = [];
+  for (const id of lineIds) {
+    const line = poolById(id);
+    if (!line) {
+      shares.push({ stockLineId: id, boxes: 0, vol: 0, largeBoxes: 0 });
+      continue;
+    }
+    shares.push(makeShare(line, line.boxes, largeBoxVol));
+  }
+  return shares;
+}
+
+export function syncShare(
+  raw: ContentLineShare,
+  poolById: (id: string) => StockLine | undefined,
+  largeBoxVol: number,
+): ContentLineShare {
+  const line = poolById(raw.stockLineId);
+  const boxes = raw.boxes ?? line?.boxes ?? 0;
+  const boxVol = line?.boxVol ?? 0;
+  const vol = raw.vol != null && Number.isFinite(raw.vol) ? raw.vol : shareVol(boxVol, boxes);
+  const largeBoxes =
+    raw.largeBoxes != null && Number.isFinite(raw.largeBoxes)
+      ? raw.largeBoxes
+      : line
+        ? makeShare(line, boxes, largeBoxVol).largeBoxes
+        : 0;
+  return { stockLineId: raw.stockLineId, boxes, vol, largeBoxes };
+}
+
+export function sharesOfContent(
+  content: CabinetContent,
+  poolById: (id: string) => StockLine | undefined,
+  largeBoxVol: number,
+): ContentLineShare[] {
+  if (content.stockShares?.length) {
+    return content.stockShares.map((s) => syncShare(s, poolById, largeBoxVol));
+  }
+  if (content.trays?.some((t) => t.onTray?.length)) {
+    return sharesFromTrays(content.trays, poolById, largeBoxVol);
+  }
+  return sharesFromLineIds(content.lines || [], poolById, largeBoxVol);
+}
+
+export function contentTotals(
+  content: CabinetContent,
+  poolById: (id: string) => StockLine | undefined,
+  largeBoxVol: number,
+): { totalVol: number; largeBoxCount: number; lineIds: string[]; shares: ContentLineShare[] } {
+  const shares = sharesOfContent(content, poolById, largeBoxVol);
+  const agg = aggregateShares(shares);
+  return { ...agg, shares };
+}
+
 export function contentVol(content: CabinetContent, poolById: (id: string) => StockLine | undefined): number {
+  if (content.stockShares?.length) {
+    return aggregateShares(content.stockShares).totalVol;
+  }
+  if (content.totalVol != null && Number.isFinite(content.totalVol) && content.totalVol > 0) {
+    return content.totalVol;
+  }
   if (content.trays?.length) {
     const fromTrays = content.trays.reduce((s, t) => s + (t.vol || 0), 0);
     if (fromTrays > 0) return fromTrays;
@@ -136,6 +234,14 @@ function occupiedQty(line: StockLine, contents: CabinetContent[], kind: 'boxes' 
   for (const c of contents) {
     if (c.hidden || c.id === excludeContentId) continue;
     let hit = false;
+    if (c.stockShares?.length) {
+      for (const share of c.stockShares) {
+        if (share.stockLineId !== line.id) continue;
+        n += kind === 'boxes' ? share.boxes || 0 : share.vol || 0;
+        hit = true;
+      }
+      if (hit) continue;
+    }
     for (const tray of c.trays || []) {
       for (const row of tray.onTray || []) {
         if (row.stockLineId !== line.id) continue;
@@ -168,6 +274,16 @@ export function remainingVol(line: StockLine, contents: CabinetContent[], exclud
 }
 
 export function onTrayShareOf(content: CabinetContent, stockLineId: string): { boxes: number; vol: number } {
+  if (content.stockShares?.length) {
+    let boxes = 0;
+    let vol = 0;
+    for (const share of content.stockShares) {
+      if (share.stockLineId !== stockLineId) continue;
+      boxes += share.boxes || 0;
+      vol += share.vol || 0;
+    }
+    if (boxes || vol) return { boxes, vol };
+  }
   let boxes = 0;
   let vol = 0;
   for (const tray of content.trays || []) {
@@ -184,6 +300,7 @@ export function cloneContent(f: CabinetContent): CabinetContent {
   return {
     ...f,
     lines: [...(f.lines || [])],
+    stockShares: cloneShares(f.stockShares),
     trays: (f.trays || []).map((t) => ({
       ...t,
       onTray: (t.onTray || []).map((o) => ({ ...o })),
@@ -196,7 +313,13 @@ export function inferStatus(partial: Partial<CabinetContent>): ContentStatus {
   if (partial.hidden) return 'closed';
   if (partial.date) return 'scheduled';
   if (partial.loadComplete) return 'active';
-  if ((partial.lines && partial.lines.length) || (partial.trays && partial.trays.length)) return 'active';
+  if (
+    (partial.lines && partial.lines.length) ||
+    (partial.stockShares && partial.stockShares.length) ||
+    (partial.trays && partial.trays.length)
+  ) {
+    return 'active';
+  }
   return 'draft';
 }
 
@@ -207,35 +330,52 @@ export function normalizeCabinetContent(
     poolById: (id: string) => StockLine | undefined;
     largeBoxVol: number;
     cabinet?: Cabinet;
+    /** 变更-8 主路径默认不强制托盘层；旧 lines 字面量仍可分层以兼容 C1 */
+    hydrateTrays?: boolean;
   },
 ): CabinetContent {
-  const lineIds = (raw.lines && raw.lines.length ? raw.lines : flattenOnTrayIds(raw.trays)).slice();
+  const providedShares = (raw.stockShares || []).map((s) => syncShare(s, opts.poolById, opts.largeBoxVol));
+  const lineIdsFromRaw = (raw.lines && raw.lines.length ? raw.lines : flattenOnTrayIds(raw.trays)).slice();
+  const hydrateTrays = opts.hydrateTrays ?? providedShares.length === 0;
+
   let trays = (raw.trays || []).map((t) => syncTrayAggregates(t, opts.poolById, opts.largeBoxVol));
   const missingTrayId = trays.some((t) => !t.trayId);
-  if (!trays.length && lineIds.length) {
-    trays = hydrateTraysFromLines({
-      contentId: raw.id,
-      cabinetId: raw.cabinetId,
-      lineIds,
-      trayMaster: opts.trayMaster,
-      poolById: opts.poolById,
-      largeBoxVol: opts.largeBoxVol,
-    });
-  } else if (missingTrayId) {
-    trays = hydrateTraysFromLines({
-      contentId: raw.id,
-      cabinetId: raw.cabinetId,
-      lineIds,
-      trayMaster: opts.trayMaster,
-      poolById: opts.poolById,
-      largeBoxVol: opts.largeBoxVol,
-    });
+  if (hydrateTrays) {
+    if (!trays.length && lineIdsFromRaw.length) {
+      trays = hydrateTraysFromLines({
+        contentId: raw.id,
+        cabinetId: raw.cabinetId,
+        lineIds: lineIdsFromRaw,
+        trayMaster: opts.trayMaster,
+        poolById: opts.poolById,
+        largeBoxVol: opts.largeBoxVol,
+      });
+    } else if (missingTrayId) {
+      trays = hydrateTraysFromLines({
+        contentId: raw.id,
+        cabinetId: raw.cabinetId,
+        lineIds: lineIdsFromRaw,
+        trayMaster: opts.trayMaster,
+        poolById: opts.poolById,
+        largeBoxVol: opts.largeBoxVol,
+      });
+    }
+  } else if (!raw.trays?.length) {
+    trays = [];
   }
-  const lines = flattenOnTrayIds(trays);
-  const syncedLines = lines.length ? lines : lineIds;
+
+  let stockShares = providedShares;
+  if (!stockShares.length) {
+    stockShares = trays.some((t) => t.onTray?.length)
+      ? sharesFromTrays(trays, opts.poolById, opts.largeBoxVol)
+      : sharesFromLineIds(lineIdsFromRaw, opts.poolById, opts.largeBoxVol);
+  }
+
+  const agg = aggregateShares(stockShares);
+  const syncedLines = agg.lineIds.length ? agg.lineIds : flattenOnTrayIds(trays).length ? flattenOnTrayIds(trays) : lineIdsFromRaw;
   const date = raw.date ?? null;
   const shift = raw.shift ?? null;
-  const status = inferStatus({ ...raw, lines: syncedLines, date });
+  const status = inferStatus({ ...raw, lines: syncedLines, stockShares, date });
   const scheduleStatus = raw.scheduleStatus ?? (date ? 'scheduled' : 'unscheduled');
   const content: CabinetContent = {
     id: raw.id,
@@ -244,6 +384,9 @@ export function normalizeCabinetContent(
     shift,
     seq: raw.seq ?? null,
     lines: syncedLines,
+    stockShares,
+    totalVol: agg.totalVol,
+    largeBoxCount: agg.largeBoxCount,
     trays,
     status,
     scheduleStatus,
@@ -264,7 +407,11 @@ export function normalizeCabinetContent(
 export function asContent(
   partial: Partial<CabinetContent> & Pick<CabinetContent, 'cabinetId'> & { lines?: string[]; id?: string },
 ): CabinetContent {
-  const lines = partial.lines ? [...partial.lines] : flattenOnTrayIds(partial.trays);
+  const lines = partial.lines
+    ? [...partial.lines]
+    : flattenShareIds(partial.stockShares).length
+      ? flattenShareIds(partial.stockShares)
+      : flattenOnTrayIds(partial.trays);
   const date = partial.date === undefined ? null : partial.date;
   const shift = partial.shift === undefined ? null : partial.shift;
   return {
@@ -274,6 +421,9 @@ export function asContent(
     shift,
     seq: partial.seq ?? null,
     lines,
+    stockShares: cloneShares(partial.stockShares),
+    totalVol: partial.totalVol,
+    largeBoxCount: partial.largeBoxCount,
     trays: partial.trays ? partial.trays.map((t) => ({ ...t, onTray: [...(t.onTray || [])] })) : [],
     status: inferStatus({ ...partial, lines, date }),
     scheduleStatus: partial.scheduleStatus ?? (date ? 'scheduled' : 'unscheduled'),
@@ -323,7 +473,8 @@ export function findPlacement(
 ): { content: CabinetContent; cabinetId: string } | undefined {
   for (const c of contents) {
     if (c.hidden) continue;
-    const on = c.lines.includes(lineId) || (c.trays || []).some((t) => t.onTray.some((o) => o.stockLineId === lineId));
+    const onShare = (c.stockShares || []).some((s) => s.stockLineId === lineId && (s.boxes > 0 || s.vol > 0));
+    const on = onShare || c.lines.includes(lineId) || (c.trays || []).some((t) => t.onTray.some((o) => o.stockLineId === lineId));
     if (on) return { content: c, cabinetId: c.cabinetId };
   }
   return undefined;

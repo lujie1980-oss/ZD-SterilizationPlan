@@ -395,7 +395,7 @@ describe('C3-06 硬约束铁律不可配掉', () => {
     expect(rows.some((r) => r.lineId === 'P001')).toBe(false);
   });
 
-  it('BOX_LIMIT 口径2：大箱合计超 280 的行不会被 auto 落盘', () => {
+  it('BOX_LIMIT 口径2：大箱合计超 280 的行按余量 B 只落 280，不整行超限落盘', () => {
     const huge = stock({
       id: 'HUGE',
       process: '手术衣',
@@ -417,10 +417,14 @@ describe('C3-06 硬约束铁律不可配掉', () => {
       poolById: poolBy([huge]),
       policy,
     });
-    expect(packed.ok).toBe(false);
+    expect(packed.ok).toBe(true);
+    expect(packed.content!.largeBoxCount).toBe(280);
+    expect(packed.content!.stockShares![0]!.boxes).toBe(280);
+    const leftover = remainingBoxes(huge, [packed.content!]);
+    expect(leftover).toBe(20);
   });
 
-  it('TRAY_OVERFLOW：超托盘行被跳过，auto 结果零 error', () => {
+  it('TRAY_OVERFLOW：体积主路径不强制托盘；auto 结果零 error', () => {
     const packed = autoPackCabinet({
       cabinetId: '柜9',
       pool: seed,
@@ -434,19 +438,19 @@ describe('C3-06 硬约束铁律不可配掉', () => {
       poolById: seedById,
       policy,
     });
-    if (packed.ok && packed.content) {
-      const ctx: RuleContext = {
-        cabinets: CABINETS,
-        processes: PROCESSES,
-        poolById: seedById,
-        config: cfg,
-        sameShiftFurnaces: [packed.content],
-        trayMaster: TRAYS,
-        allContents: [packed.content],
-      };
-      expect(validateFurnace(packed.content, ctx).some((i) => i.sev === 'error')).toBe(false);
-      expect(packed.content.lines.includes('P001')).toBe(false);
-    }
+    expect(packed.ok).toBe(true);
+    const ctx: RuleContext = {
+      cabinets: CABINETS,
+      processes: PROCESSES,
+      poolById: seedById,
+      config: cfg,
+      sameShiftFurnaces: [packed.content!],
+      trayMaster: TRAYS,
+      allContents: [packed.content!],
+    };
+    expect(validateFurnace(packed.content!, ctx).some((i) => i.sev === 'error')).toBe(false);
+    expect(packed.content!.stockShares!.length).toBeGreaterThan(0);
+    expect(packed.content!.trays?.length || 0).toBe(0);
   });
 
   it('REPACK_AFTER_LOAD_COMPLETE：装填完毕自动禁再拼', () => {

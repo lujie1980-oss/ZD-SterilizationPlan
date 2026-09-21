@@ -206,7 +206,7 @@ describe('变更-1 组柜无日期班次 / 甘特才写回 (C1-11/22/23/37/38)',
     expect(packed.content!.scheduleStatus).toBe('unscheduled');
   });
 
-  it('C1-37: 组柜完成未进甘特 → 有 Content+Trays+OnTray，无 CabinetTask', () => {
+  it('C1-37: 组柜完成未进甘特 → 有 Content+需求行分量，无 CabinetTask（托盘层可选）', () => {
     const packed = autoPackCabinet({
       cabinetId: '柜9',
       pool,
@@ -220,11 +220,8 @@ describe('变更-1 组柜无日期班次 / 甘特才写回 (C1-11/22/23/37/38)',
       poolById,
     });
     const c = packed.content!;
-    expect(c.trays!.length).toBeGreaterThan(0);
-    expect(c.trays!.every((t) => t.trayId && t.trayId.length)).toBe(true);
-    const master = traysForCabinet('柜9');
-    expect(c.trays!.every((t) => master.some((m) => m.id === t.trayId))).toBe(true);
-    expect(c.trays!.every((t) => t.onTray.length >= 1)).toBe(true);
+    expect(c.stockShares!.length).toBeGreaterThan(0);
+    expect(c.stockShares!.every((s) => s.stockLineId && s.boxes > 0)).toBe(true);
     expect(c.taskId).toBeNull();
   });
 

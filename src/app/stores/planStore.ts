@@ -93,7 +93,7 @@ import { loadMaster, saveMaster } from '../../persistence/master-store';
 import { triggerDownload } from '../lib/download';
 import { useUiStore } from './uiStore';
 
-const GROUPING_ISSUE_CODES = new Set(['REPACK_AFTER_LOAD_COMPLETE', 'ON_TRAY_QTY_OVERFLOW', 'TRAY_OVERFLOW']);
+const GROUPING_ISSUE_CODES = new Set(['REPACK_AFTER_LOAD_COMPLETE', 'ON_TRAY_QTY_OVERFLOW', 'TRAY_OVERFLOW', 'VOL_OVERFLOW', 'BOX_LIMIT']);
 
 function toast(msg: string, type: 'success' | 'error' | 'warn' | 'info' = 'success'): void {
   useUiStore().toast(msg, type);
@@ -922,6 +922,7 @@ export const usePlanStore = defineStore('plan', {
         nextId: `CC${this.nextFurnaceSeq++}`,
         poolById: (id) => this.poolById(id),
         allowInOther: false,
+        clampToLimits: this.scheduleMode !== 'manual',
       });
       if (!packed.ok || !packed.content) {
         toast(packed.message, 'error');
@@ -948,6 +949,19 @@ export const usePlanStore = defineStore('plan', {
         const viol = decision.persisted.find((x) => x.manualViolation);
         if (viol) useUiStore().openOverride(viol.id, decision.issues);
       }
+    },
+    runDropDemand(lineId: string): void {
+      if (!this.grpSelectedCabinetId) {
+        toast('请先选择灭菌柜', 'warn');
+        return;
+      }
+      this.runManualPackLine(lineId);
+    },
+    runManualPackLine(lineId: string): void {
+      const prevChecked = [...this.grpCheckedDemandIds];
+      this.grpCheckedDemandIds = [lineId];
+      this.runManualPack();
+      this.grpCheckedDemandIds = prevChecked;
     },
     runMarkLoadComplete(): void {
       const cabinetId = this.grpSelectedCabinetId;
