@@ -1,0 +1,10 @@
+services:
+  zd-sterilization-plan:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zd-sterilization-plan:local
+    # 本机 18080 → 容器 nginx 80。若 18080 被占用，改为 "28080:80"
+    ports:
+      - "18080:80"
+    restart: unless-stopped

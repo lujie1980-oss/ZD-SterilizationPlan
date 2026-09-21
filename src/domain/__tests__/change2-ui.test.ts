@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { nextTick, type App } from 'vue';
 import { STORAGE_KEY } from '../../data/config-defaults';
-import { furnaceSortPolicyPanelHtml } from '../../ui/furnace-plan-view';
-import { bootApp } from '../../ui/app';
+import { furnaceSortPolicyPanelHtml } from '../../app/components/gantt/sort-policy-contract';
+import { mountSterilizationApp, waitEl } from '../../app/create-app';
 import { defaultScheduleSortPolicy } from '../schedule-sort-policy';
 
 describe('变更-2 排序策略面板 UI', () => {
@@ -33,21 +32,25 @@ describe('变更-2 排序策略面板 UI', () => {
 });
 
 describe('变更-2 进炉计划 jsdom', () => {
+  let app: App | undefined;
+
   beforeEach(() => {
     localStorage.clear();
-    const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
-    const body = html.replace(/<script[\s\S]*?<\/script>/gi, '');
-    document.body.innerHTML = body.includes('<body>') ? body.slice(body.indexOf('<body>') + 6, body.lastIndexOf('</body>')) : body;
+    document.body.innerHTML = '<div id="app"></div>';
   });
 
   afterEach(() => {
+    app?.unmount();
+    app = undefined;
     localStorage.clear();
     document.body.innerHTML = '';
   });
 
-  it('C2 面板挂在进炉计划；保存不同步不改 Task；恢复默认预览正确', () => {
-    bootApp();
+  it('C2 面板挂在进炉计划；保存不同步不改 Task；恢复默认预览正确', async () => {
+    const mounted = await mountSterilizationApp();
+    app = mounted.app;
     (document.querySelector('[data-page="furnace-plan"]') as HTMLElement).click();
+    await waitEl('[data-testid="schedule-sort-policy"]');
     const panel = document.querySelector('[data-testid="schedule-sort-policy"]');
     expect(panel).toBeTruthy();
     expect(panel?.textContent).toContain('排序策略');
@@ -64,7 +67,9 @@ describe('变更-2 进炉计划 jsdom', () => {
 
     const volDir = document.querySelector('[data-sort-code="volume"] [data-sort-dir]') as HTMLElement;
     volDir.click();
+    await nextTick();
     (document.querySelector('#btnSaveSortPolicy') as HTMLElement).click();
+    await nextTick();
 
     const rawAfterSave = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
     expect(rawAfterSave.config.scheduleSortPolicy.keys.find((k: { code: string }) => k.code === 'volume').direction).toBe('asc');
@@ -73,6 +78,7 @@ describe('变更-2 进炉计划 jsdom', () => {
     expect(rawAfterSave.config.packSuggestPolicy.preset).toBe('fillFirst');
 
     (document.querySelector('#btnRestoreSortPolicy') as HTMLElement).click();
+    await nextTick();
     const preview = document.querySelector('[data-testid="sort-policy-preview"]')?.textContent;
     expect(preview).toContain('date↑ · shift↑ · volume↓ · (id)');
   });

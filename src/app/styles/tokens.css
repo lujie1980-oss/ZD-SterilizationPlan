@@ -1,0 +1,58 @@
+:root {
+  /* ── Color (unchanged semantics) ── */
+  --primary: #1677ff;
+  --primary-hover: #4096ff;
+  --sidebar: #001529;
+  --sidebar-text: rgba(255,255,255,0.65);
+  --sidebar-active: #1677ff;
+  --bg: #f5f7fa;
+  --success: #52c41a;
+  --warning: #faad14;
+  --error: #ff4d4f;
+  --info: #1677ff;
+  --text: rgba(0,0,0,0.88);
+  --text-secondary: rgba(0,0,0,0.45);
+  --border: #f0f0f0;
+  --card: #fff;
+  --pending: #fa8c16;
+  --shadow: 0 1px 2px 0 rgba(0,0,0,0.03), 0 1px 6px -1px rgba(0,0,0,0.02), 0 2px 4px 0 rgba(0,0,0,0.02);
+
+  /* ── Density tokens · 变更-4 中度紧凑（镜像 8088 原型 :root） ── */
+  --space-xs: 4px;   /* alias --space-1 */
+  --space-sm: 8px;   /* alias --space-2 */
+  --space-md: 12px;  /* alias --space-3 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --font-xs: 12px;
+  --font-sm: 13px;
+  --font-md: 14px;
+  --row-h: 30px;          /* table body row target */
+  --header-h: 34px;       /* table header / compact bar */
+  --topbar-h: 40px;
+  --sidebar-w: 168px;     /* §13: ~168px */
+  --sidebar-w-collapsed: 52px;
+  --radius: 4px;
+  --control-h: 28px;      /* input / button */
+  --page-pad-y: 10px;
+  --page-pad-x: 14px;
+  --card-pad: 10px;
+  --card-hd-pad-y: 8px;
+  --card-hd-pad-x: 12px;
+  --table-th-pad-y: 6px;
+  --table-th-pad-x: 8px;
+  --table-td-pad-y: 4px;
+  --table-td-pad-x: 8px;
+  --chip-pad-y: 3px;
+  --chip-pad-x: 10px;
+  --chip-h: 24px;
+  --tag-h: 20px;
+  --toolbar-pad-y: 8px;
+  --toolbar-pad-x: 12px;
+  --nav-item-pad-y: 7px;
+  --nav-item-pad-x: 14px;
+  --gantt-axis-h: 36px;
+  --gantt-row-h: 44px;
+  --gantt-bar-h: 18px;
+  --fp-queue-w: 300px;
+}
