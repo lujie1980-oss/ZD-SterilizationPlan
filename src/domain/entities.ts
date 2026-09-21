@@ -177,6 +177,17 @@ export interface StockLinesOnTray {
   splitOf?: string | null;
 }
 
+/**
+ * 组柜真源：本炉装入的需求行分量（变更-8）。
+ * 不以 PlanUnit / 托盘拆分为真源。
+ */
+export interface ContentLineShare {
+  stockLineId: string;
+  boxes: number;
+  vol: number;
+  largeBoxes: number;
+}
+
 /** 计划内一层 = 一次占用某个 Tray；禁止无 trayId 的临时层 */
 export interface TraysInCabinetContent {
   id: string;
@@ -219,6 +230,8 @@ export interface EligibleDemandRow {
   placement: PlacementStatus;
   otherCabinetId?: string;
   line: StockLine;
+  remainingBoxes?: number;
+  remainingVol?: number;
 }
 
 export interface EligibleCabinetRow {
@@ -242,8 +255,14 @@ export interface CabinetContent {
   /** 组柜时 null；甘特写回 */
   shift: Shift | null;
   seq?: number | null;
-  /** 扁平行 id，与 trays[].onTray 同步（一期兼容） */
+  /** 扁平行 id，与 stockShares 同步（一期兼容） */
   lines: string[];
+  /** 组柜真源：需求行×拟装箱数/体积；无则由 lines / trays 派生 */
+  stockShares?: ContentLineShare[];
+  /** 本炉已装体积（由 stockShares 汇总） */
+  totalVol?: number;
+  /** 本炉大箱件数（单箱 ≥ largeBoxVol） */
+  largeBoxCount?: number;
   trays?: TraysInCabinetContent[];
   status?: ContentStatus;
   scheduleStatus?: ScheduleStatus;
@@ -449,6 +468,7 @@ export const ISSUE_CODES = {
   CABINET_SCRAPPED: 'CABINET_SCRAPPED',
   CABINET_MISMATCH: 'CABINET_MISMATCH',
   BOX_LIMIT: 'BOX_LIMIT',
+  VOL_OVERFLOW: 'VOL_OVERFLOW',
   D002_MIN: 'D002_MIN',
   TARGET_MIN: 'TARGET_MIN',
   MIX_CUSTOMER: 'MIX_CUSTOMER',

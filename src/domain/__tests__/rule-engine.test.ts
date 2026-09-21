@@ -217,6 +217,15 @@ describe('rule-engine', () => {
     const l = line({ id: 'P', process: 'D002', allowed: ['柜9'], vol: 120, boxes: 1200, boxVol: 0.1 });
     const issues = validateFurnace(run({ cabinetId: '柜9', lines: ['P'] }), ctx([l]));
     expect(issues.some((i) => i.code === 'OVER_CAP')).toBe(true);
+    expect(issues.some((i) => i.code === 'VOL_OVERFLOW' && i.sev === 'error')).toBe(true);
+  });
+
+  it('emits VOL_OVERFLOW when packed volume exceeds ratedLoadM3', () => {
+    const l = line({ id: 'P', process: '手术衣', allowed: ['柜8'], boxes: 100, boxVol: 1 });
+    const issues = validateFurnace(run({ cabinetId: '柜8', lines: ['P'] }), ctx([l]));
+    const hit = issues.find((i) => i.code === 'VOL_OVERFLOW');
+    expect(hit?.sev).toBe('error');
+    expect(hit?.msg).toContain('VOL_OVERFLOW');
   });
 
   it('emits OCCUPANCY when same-shift cabinets exceed capacity together', () => {

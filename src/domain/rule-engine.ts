@@ -3,12 +3,14 @@ import {
   occupiedBoxesOf,
   occupiedVolOf,
   onTrayShareOf,
+  contentTotals,
   trayCapacityM3,
 } from './cabinet-content';
 import { effectiveMinLoadM3 } from './min-load';
 import type { FurnaceRun, RuleContext, ValidationIssue } from './entities';
 import { ISSUE_CODES } from './entities';
 import { furnaceCustomers, furnaceVol, largeBoxCount } from './pool';
+import { boxLimitIssue, volOverflowIssue } from './volume-pack';
 
 export function canAddFurnace(cabinetId: string, ctx: RuleContext): { ok: true } | { ok: false; issue: ValidationIssue } {
   const cab = ctx.cabinets.find((c) => c.id === cabinetId);
@@ -28,7 +30,8 @@ export function canAddFurnace(cabinetId: string, ctx: RuleContext): { ok: true }
 
 export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const lines = f.lines.map((id) => ctx.poolById(id)).filter((l): l is NonNullable<typeof l> => Boolean(l));
+  const lineIds = f.lines?.length ? f.lines : (f.stockShares || []).map((s) => s.stockLineId);
+  const lines = lineIds.map((id) => ctx.poolById(id)).filter((l): l is NonNullable<typeof l> => Boolean(l));
   if (!lines.length) return issues;
 
   const cab = ctx.cabinets.find((c) => c.id === f.cabinetId);
@@ -42,7 +45,6 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
     });
   }
 
-  const vol = furnaceVol(f, ctx.poolById);
   const processes = [...new Set(lines.map((l) => l.process))];
   const primaryProcess = processes[0]!;
 
@@ -59,15 +61,16 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
   }
 
   const { largeBoxVol, maxBoxesWhenLarge } = ctx.config.box;
-  // v1.3 / 口径 2：只统计大箱箱数合计，炉总箱数不触发 BOX_LIMIT
-  const largeBoxes = largeBoxCount(lines, largeBoxVol);
+  const totals = contentTotals(f, ctx.poolById, largeBoxVol);
+  const vol = totals.shares.length ? totals.totalVol : furnaceVol(f, ctx.poolById);
+  const largeBoxes = totals.shares.length ? totals.largeBoxCount : largeBoxCount(lines, largeBoxVol);
   if (largeBoxes > maxBoxesWhenLarge) {
-    issues.push({
-      sev: 'error',
-      code: ISSUE_CODES.BOX_LIMIT,
-      msg: `大箱（单箱≥${largeBoxVol}m³）合计 ${largeBoxes} 箱，超过每炉上限 ${maxBoxesWhenLarge}`,
-      furnaceId: f.id,
-    });
+    issues.push(boxLimitIssue({ furnaceId: f.id, largeBoxes, largeBoxVol, maxBoxesWhenLarge }));
+  }
+
+  const rated = cab?.ratedLoadM3 ?? 0;
+  if (rated > 0 && vol > rated + 1e-9) {
+    issues.push(volOverflowIssue({ furnaceId: f.id, cabinetId: f.cabinetId, totalVol: vol, ratedLoadM3: rated }));
   }
 
   const min = effectiveMinLoadM3(primaryProcess, ctx.config, ctx.processes);
@@ -177,30 +180,34 @@ export function validateFurnace(f: FurnaceRun, ctx: RuleContext): ValidationIssu
   }
 
   const peers = (ctx.allContents ?? ctx.sameShiftFurnaces).filter((c) => !c.hidden);
+  const qtyIds = new Set<string>();
+  for (const share of f.stockShares || []) {
+    if (share.stockLineId) qtyIds.add(share.stockLineId);
+  }
   if (f.trays?.length) {
-    const seen = new Set<string>();
     for (const tray of f.trays) {
       for (const row of tray.onTray || []) {
-        if (!row.stockLineId || seen.has(row.stockLineId)) continue;
-        seen.add(row.stockLineId);
-        const line = ctx.poolById(row.stockLineId);
-        if (!line) continue;
-        const share = onTrayShareOf(f, line.id);
-        const otherBoxes = occupiedBoxesOf(line, peers, f.id);
-        const otherVol = occupiedVolOf(line, peers, f.id);
-        const usedBoxes = share.boxes + otherBoxes;
-        const usedVol = share.vol + otherVol;
-        if (usedBoxes > line.boxes || usedVol > line.vol + 1e-6) {
-          issues.push({
-            sev: 'error',
-            code: ISSUE_CODES.ON_TRAY_QTY_OVERFLOW,
-            msg: `${line.id} OnTray 分量超量：箱 ${share.boxes}+已占用${otherBoxes}/${line.boxes}，体积 ${share.vol.toFixed(1)}+已占用${otherVol.toFixed(1)}/${line.vol}`,
-            furnaceId: f.id,
-            lineId: line.id,
-            cabinetId: f.cabinetId,
-          });
-        }
+        if (row.stockLineId) qtyIds.add(row.stockLineId);
       }
+    }
+  }
+  for (const stockLineId of qtyIds) {
+    const line = ctx.poolById(stockLineId);
+    if (!line) continue;
+    const share = onTrayShareOf(f, line.id);
+    const otherBoxes = occupiedBoxesOf(line, peers, f.id);
+    const otherVol = occupiedVolOf(line, peers, f.id);
+    const usedBoxes = share.boxes + otherBoxes;
+    const usedVol = share.vol + otherVol;
+    if (usedBoxes > line.boxes || usedVol > line.vol + 1e-6) {
+      issues.push({
+        sev: 'error',
+        code: ISSUE_CODES.ON_TRAY_QTY_OVERFLOW,
+        msg: `${line.id} 分量超量：箱 ${share.boxes}+已占用${otherBoxes}/${line.boxes}，体积 ${share.vol.toFixed(1)}+已占用${otherVol.toFixed(1)}/${line.vol}`,
+        furnaceId: f.id,
+        lineId: line.id,
+        cabinetId: f.cabinetId,
+      });
     }
   }
 

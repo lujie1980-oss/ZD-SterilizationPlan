@@ -78,7 +78,7 @@ export function groupingPolicyPanelHtml(policy: PackSuggestPolicy): string {
       <button class="btn btn-primary" id="btnSavePackPolicy" type="button">保存策略</button>
       <button class="btn" id="btnRestorePackPolicy" type="button">恢复默认</button>
     </div>
-    <div class="grp-policy-iron" data-testid="pack-policy-iron">硬约束（指定柜 / BOX_LIMIT 口径2 / 托盘 / 灭菌中 / 装填完毕）与双模式不可配掉；组柜不建任务。保存后下次自动组柜生效。</div>
+    <div class="grp-policy-iron" data-testid="pack-policy-iron">硬约束（指定柜 / VOL_OVERFLOW / BOX_LIMIT / 灭菌中 / 装填完毕）与双模式不可配掉；组柜不建任务、不拆托盘。保存后下次自动组柜生效。</div>
   </div>`;
 }
 
@@ -122,4 +122,10 @@ export function groupingLoadCompleteBannerHtml(mode: ScheduleMode): string {
     return '装填完毕待入炉：手工允许再拼，须强预警（红条 / 校验中心 REPACK_AFTER_LOAD_COMPLETE）。待入炉不当空闲。';
   }
   return '装填完毕待入炉：自动禁止再拼（拒绝落盘）。待入炉不当空闲。';
+}
+
+export function packConstraintBanner(code: string, msg: string): string {
+  if (code === 'VOL_OVERFLOW') return `VOL_OVERFLOW 体积超柜容：${msg}`;
+  if (code === 'BOX_LIMIT') return `BOX_LIMIT 大箱超 280：${msg}`;
+  return msg;
 }

@@ -28,6 +28,9 @@ export interface CommitDecision {
 export function cloneFurnaces(furnaces: FurnaceRun[]): FurnaceRun[] {
   return furnaces.map((f) => {
     const copy: FurnaceRun = { ...f, lines: [...f.lines] };
+    if (f.stockShares) {
+      copy.stockShares = f.stockShares.map((s) => ({ ...s }));
+    }
     if (f.trays) {
       copy.trays = f.trays.map((t) => ({
         ...t,
@@ -76,7 +79,8 @@ function changedFurnaceIds(previous: FurnaceRun[], next: FurnaceRun[]): Set<stri
       p.cabinetId !== f.cabinetId ||
       p.hidden !== f.hidden ||
       p.lines.length !== f.lines.length ||
-      p.lines.some((id, i) => id !== f.lines[i])
+      p.lines.some((id, i) => id !== f.lines[i]) ||
+      JSON.stringify(p.stockShares || []) !== JSON.stringify(f.stockShares || [])
     ) {
       ids.add(f.id);
     }

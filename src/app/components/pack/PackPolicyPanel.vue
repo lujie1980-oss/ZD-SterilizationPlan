@@ -62,7 +62,7 @@ const preset = computed(() => policy.value.preset || 'custom');
         <button id="btnSavePackPolicy" class="btn btn-primary" type="button" @click="plan.savePackPolicyFromDraft()">保存策略</button>
         <button id="btnRestorePackPolicy" class="btn" type="button" @click="plan.restorePackPolicyDefaults()">恢复默认</button>
       </div>
-      <div class="grp-policy-iron" data-testid="pack-policy-iron">硬约束（指定柜 / BOX_LIMIT 口径2 / 托盘 / 灭菌中 / 装填完毕）与双模式不可配掉；组柜不建任务。保存后下次自动组柜生效。</div>
+      <div class="grp-policy-iron" data-testid="pack-policy-iron">硬约束（指定柜 / VOL_OVERFLOW / BOX_LIMIT / 灭菌中 / 装填完毕）与双模式不可配掉；组柜不建任务、不拆托盘。保存后下次自动组柜生效。</div>
     </div>
   </div>
 </template>
